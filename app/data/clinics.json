@@ -1,0 +1,28 @@
+{
+  "cities": [
+    { "code": "almaty", "name": "Алматы" },
+    { "code": "astana", "name": "Астана" },
+    { "code": "shymkent", "name": "Шымкент" }
+  ],
+  "clinics": [
+    { "code": "invitro", "name": "INVITRO (ИНВИТРО)", "type": "lab", "city": "almaty", "address": "БЦ Эталон, ул. Кунаева, 32", "rating": 4.6, "branches_note": "Сеть, 141 адрес по Казахстану", "national_pricing": true, "source_url": "https://invitro.103.kz/pricing/" },
+    { "code": "kdl_olymp", "name": "КДЛ ОЛИМП", "type": "lab", "city": "almaty", "address": "БЦ Премьер Алатау, пр. Достык, 105", "rating": 4.5, "branches_note": "Сеть КДЛ по РК", "national_pricing": true, "source_url": "https://kdlolymp.103.kz/pricing/" },
+    { "code": "olymp", "name": "Олимп (лаборатория)", "type": "lab", "city": "almaty", "address": "пр. Сакена Сейфуллина, 549", "rating": 4.3, "branches_note": "Сеть лабораторий Олимп", "national_pricing": true, "source_url": "https://olimp-277.103.kz/pricing/" },
+
+    { "code": "rdc", "name": "Региональный диагностический центр", "type": "diagnostic", "city": "almaty", "address": "г. Алматы", "rating": 4.4, "source_url": "https://rdc.kz/price/" },
+    { "code": "hak", "name": "HAK Medical", "type": "diagnostic", "city": "almaty", "address": "г. Алматы", "rating": 4.5, "source_url": "https://mrt-kt.info/kliniki/almaty/" },
+    { "code": "sunkar", "name": "Сункар", "type": "diagnostic", "city": "almaty", "address": "ул. Жубанова", "rating": 4.2, "source_url": "https://mrt-kt.info/mrt/almaty/" },
+    { "code": "healthcity", "name": "HealthCity", "type": "diagnostic", "city": "almaty", "address": "г. Алматы", "rating": 4.4, "source_url": "https://mrt-kt.info/mrt/almaty/" },
+    { "code": "emirmed", "name": "Эмирмед (МРТ 3.0 Тесла)", "type": "diagnostic", "city": "almaty", "address": "г. Алматы", "rating": 4.6, "source_url": "https://mrt-kt.info/mrt/almaty/" },
+    { "code": "nnch", "name": "ННЦХ им. А.Н. Сызганова", "type": "hospital", "city": "almaty", "address": "г. Алматы", "rating": 4.5, "source_url": "https://mrt-kt.info/mrt/almaty/" },
+    { "code": "gkb7", "name": "Городская клиническая больница №7", "type": "hospital", "city": "almaty", "address": "г. Алматы", "rating": 4.1, "source_url": "https://mrt-kt.info/mrt/almaty/" },
+    { "code": "nova", "name": "Nova Medical Centre", "type": "diagnostic", "city": "almaty", "address": "г. Алматы", "rating": 4.4, "source_url": "https://mrt-kt.info/mrt/almaty/" },
+    { "code": "orhun", "name": "Орхун Медикал", "type": "diagnostic", "city": "almaty", "address": "г. Алматы", "rating": 4.3, "source_url": "https://mrt-kt.info/mrt/almaty/" },
+    { "code": "invivo", "name": "Invivo", "type": "diagnostic", "city": "almaty", "address": "г. Алматы", "rating": 4.4, "source_url": "https://mrt-kt.info/mrt/almaty/" },
+    { "code": "cgkb", "name": "Центральная городская клиническая больница", "type": "hospital", "city": "almaty", "address": "г. Алматы", "rating": 4.0, "source_url": "https://mrt-kt.info/mrt/almaty/" },
+    { "code": "ckb", "name": "Центральная клиническая больница", "type": "hospital", "city": "almaty", "address": "г. Алматы", "rating": 4.2, "source_url": "https://mrt-kt.info/mrt/almaty/" },
+    { "code": "sana", "name": "Сана (медцентр)", "type": "clinic", "city": "almaty", "address": "г. Алматы", "rating": 4.3, "source_url": "https://sana.103.kz/pricing/" },
+    { "code": "medicalpark", "name": "Medical Park", "type": "clinic", "city": "almaty", "address": "г. Алматы", "rating": 4.4, "source_url": "https://medicalpark.kz/product/uzi-almaty.html" },
+    { "code": "sema", "name": "SEMA Hospital", "type": "hospital", "city": "almaty", "address": "г. Алматы", "rating": 4.5, "source_url": "https://semahospital.kz/price.php" }
+  ]
+}
