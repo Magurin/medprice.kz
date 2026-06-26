@@ -1,0 +1,17 @@
+web/
+harvester/
+Хакатон/
+*.db
+*.log
+*.xlsx
+*.xls
+*.docx
+*.pdf
+*.PDF
+_drive.py
+build_reference.py
+__pycache__/
+**/__pycache__/
+.git/
+node_modules/
+requirements-dev.txt
