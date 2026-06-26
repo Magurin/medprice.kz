@@ -1,0 +1,10 @@
+# Полный набор для локальной разработки (парсинг, скрапинг, миграция).
+-r requirements.txt
+uvicorn[standard]==0.32.*
+beautifulsoup4==4.*
+lxml==5.*
+requests==2.*
+openpyxl==3.*
+xlrd==2.*
+pymupdf==1.*
+pandas==2.*
