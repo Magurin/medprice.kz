@@ -1,0 +1,78 @@
+@import "tailwindcss";
+
+:root {
+  /* surfaces */
+  --background: #f6f8fb;
+  --surface: #ffffff;
+  --surface-2: #f9fbfc;
+
+  /* ink */
+  --foreground: #0c1822;
+  --muted: #56697a;
+  --faint: #8696a4;
+
+  /* lines */
+  --line: #e8edf2;
+  --line-2: #d8e1e9;
+
+  /* brand — teal, medical, calm */
+  --brand: #0d9488;
+  --brand-ink: #0b7268;
+  --brand-tint: #e3f4f1;
+
+  /* semantic — deals & market */
+  --deal: #0a9d63;
+  --deal-tint: #e6f6ef;
+  --warn: #dd5a42;
+  --warn-tint: #fcebe7;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface2: var(--surface-2);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-line: var(--line);
+  --color-line2: var(--line-2);
+  --color-brand: var(--brand);
+  --color-brand-ink: var(--brand-ink);
+  --color-brand-tint: var(--brand-tint);
+  --color-deal: var(--deal);
+  --color-deal-tint: var(--deal-tint);
+  --color-warn: var(--warn);
+  --color-warn-tint: var(--warn-tint);
+  --font-sans: var(--font-geist-sans);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), system-ui, -apple-system, Segoe UI, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* tabular figures — prices line up in columns */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--brand) 22%, transparent);
+}
+
+/* tame autofill */
+input:-webkit-autofill {
+  -webkit-text-fill-color: var(--foreground);
+  transition: background-color 9999s ease-in-out 0s;
+}
