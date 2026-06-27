@@ -499,7 +499,12 @@ import os as _os
 import urllib.request as _urlreq
 import urllib.error as _urlerr
 
-from .ops_models import ParseRun, ParseError, RawPriceItem, LearnedMatch, ParseSource
+from .ops_models import (
+    ParseRun, ParseError, ParseRunLog, RawPriceItem, LearnedMatch, ParseSource,
+    ParseSchedule, OpsBase,
+)
+from .database import engine as _ops_engine
+from . import scheduling
 
 
 @app.get("/api/admin/me")
@@ -509,10 +514,14 @@ def admin_me(staff: dict = Depends(verify_staff)):
 
 
 def _run_out(r: ParseRun) -> dict:
+    duration = None
+    if r.started_at and r.finished_at:
+        duration = round((r.finished_at - r.started_at).total_seconds(), 1)
     return {
         "id": r.id, "source_kind": r.source_kind, "trigger": r.trigger, "status": r.status,
         "started_at": r.started_at.isoformat() if r.started_at else None,
         "finished_at": r.finished_at.isoformat() if r.finished_at else None,
+        "duration_sec": duration,
         "sources_total": r.sources_total, "sources_ok": r.sources_ok,
         "sources_failed": r.sources_failed, "rows_raw": r.rows_raw,
         "rows_new": r.rows_new, "rows_dup": r.rows_dup, "note": r.note,
@@ -536,12 +545,19 @@ def parse_run_detail(run_id: int, staff: dict = Depends(verify_staff),
         raise HTTPException(404, "Прогон не найден")
     errs = (db.query(ParseError).filter(ParseError.run_id == run_id)
             .order_by(ParseError.id).limit(500).all())
+    logs = (db.query(ParseRunLog).filter(ParseRunLog.run_id == run_id)
+            .order_by(ParseRunLog.id).limit(2000).all())
     return {
         **_run_out(r),
         "errors": [
             {"source": e.source, "stage": e.stage, "error": e.error,
              "created_at": e.created_at.isoformat() if e.created_at else None}
             for e in errs
+        ],
+        "logs": [
+            {"ts": l.ts.isoformat() if l.ts else None, "level": l.level,
+             "source": l.source, "stage": l.stage, "message": l.message}
+            for l in logs
         ],
     }
 
@@ -605,6 +621,73 @@ def parse_run_trigger(body: ParseRunBody, staff: dict = Depends(verify_staff),
     db.commit()
     db.refresh(run)
     return {"status": "queued", "run": _run_out(run)}
+
+
+# ---------- расписание ежедневного парсинга (ТЗ §3.1: запуск по cron) ----------
+# Время задаётся из админки и хранится в БД (UTC). Workflow на GitHub Actions
+# запускается часто и сверяется с этой записью через app.scheduling — так время
+# можно менять из UI без правки cron в YAML. См. .github/workflows/parser.yml.
+ALMATY_OFFSET = 5  # Asia/Almaty = UTC+5 (без перехода на летнее время)
+
+
+def _schedule_out(s: ParseSchedule) -> dict:
+    local_h = ((s.hour or 0) + ALMATY_OFFSET) % 24
+    return {
+        "enabled": s.enabled,
+        "hour": s.hour, "minute": s.minute,
+        "time_utc": f"{(s.hour or 0):02d}:{(s.minute or 0):02d}",
+        "time_almaty": f"{local_h:02d}:{(s.minute or 0):02d}",
+        "kind": s.kind, "run_limit": s.run_limit,
+        "step_minutes": scheduling.STEP_MINUTES,
+        "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+        "updated_by": s.updated_by,
+    }
+
+
+@app.get("/api/admin/parse/schedule")
+def parse_schedule_get(staff: dict = Depends(verify_staff), db: Session = Depends(get_db)):
+    """Текущее расписание ежедневного парсинга (ТЗ §3.1)."""
+    OpsBase.metadata.create_all(_ops_engine)  # таблицы могут ещё не существовать
+    s = scheduling.get_or_create_schedule(db)
+    return _schedule_out(s)
+
+
+class ScheduleBody(BaseModel):
+    enabled: Optional[bool] = None
+    hour: Optional[int] = None       # UTC, 0..23
+    minute: Optional[int] = None     # UTC, 0..59
+    kind: Optional[str] = None       # web | file
+    run_limit: Optional[int] = None
+
+
+@app.put("/api/admin/parse/schedule")
+def parse_schedule_put(body: ScheduleBody, staff: dict = Depends(verify_staff),
+                       db: Session = Depends(get_db)):
+    """Изменить время/параметры ежедневного парсинга из админки (ТЗ §3.1)."""
+    OpsBase.metadata.create_all(_ops_engine)
+    s = scheduling.get_or_create_schedule(db)
+    if body.hour is not None:
+        if not 0 <= body.hour <= 23:
+            raise HTTPException(400, "Час должен быть в диапазоне 0..23 (UTC)")
+        s.hour = body.hour
+    if body.minute is not None:
+        if not 0 <= body.minute <= 59:
+            raise HTTPException(400, "Минуты должны быть в диапазоне 0..59")
+        s.minute = body.minute
+    if body.enabled is not None:
+        s.enabled = body.enabled
+    if body.kind is not None:
+        if body.kind not in ("web", "file"):
+            raise HTTPException(400, "kind должен быть web или file")
+        s.kind = body.kind
+    if body.run_limit is not None:
+        if body.run_limit < 1:
+            raise HTTPException(400, "Лимит должен быть положительным")
+        s.run_limit = body.run_limit
+    s.updated_by = staff.get("user_id")
+    db.commit()
+    db.refresh(s)
+    return _schedule_out(s)
 
 
 # ---------- источники парсинга (ТЗ §3.1: управление целевыми сайтами) ----------
