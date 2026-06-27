@@ -14,6 +14,7 @@ export default function ClinicsListPage() {
   const [q, setQ] = useState("");
   const [dq, setDq] = useState(""); // q с задержкой -> идёт в запрос
   const [clinics, setClinics] = useState<ClinicRow[]>([]);
+  const [total, setTotal] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -28,11 +29,17 @@ export default function ClinicsListPage() {
 
   useEffect(() => {
     setLoading(true);
+    setTotal(null);
+    const p = { city: city || undefined, q: dq || undefined };
     api
-      .clinics({ city: city || undefined, q: dq || undefined, limit: LIMIT })
+      .clinics({ ...p, limit: LIMIT })
       .then(setClinics)
       .catch(() => setClinics([]))
       .finally(() => setLoading(false));
+    api
+      .clinicsCount(p)
+      .then((r) => setTotal(r.count))
+      .catch(() => setTotal(null));
   }, [city, dq]);
 
   const capped = clinics.length >= LIMIT;
@@ -42,10 +49,10 @@ export default function ClinicsListPage() {
       <div className="mb-4">
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">Клиники</h1>
         <p className="mt-1 text-sm text-muted">
-          {loading
+          {loading && total === null
             ? "Загрузка…"
-            : `${clinics.length}${capped ? "+" : ""} клиник${city ? ` · ${city}` : ""}`}
-          {capped && " · уточните поиск, чтобы найти нужную"}
+            : `${(total ?? clinics.length).toLocaleString("ru-RU")} клиник${city ? ` · ${city}` : ""}`}
+          {capped && total !== null && total > LIMIT && " · показаны первые 500, уточните поиск"}
         </p>
       </div>
 

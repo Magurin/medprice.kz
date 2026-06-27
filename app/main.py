@@ -396,6 +396,28 @@ def clinics(
     ]
 
 
+# Точное число клиник под текущие фильтры (для счётчика — список отдаётся с потолком limit).
+# Должен быть объявлен ДО /api/clinics/{clinic_id}, иначе "count" уйдёт в int-параметр.
+@app.get("/api/clinics/count")
+def clinics_count(
+    city: Optional[str] = None,
+    q: Optional[str] = None,
+    source: str = Query("all", pattern="^(all|web|file)$"),
+    with_coords: bool = Query(False),
+    db: Session = Depends(get_db),
+):
+    query = db.query(func.count(Clinic.id)).outerjoin(City, City.id == Clinic.city_id)
+    if city:
+        query = query.filter(City.name == city)
+    if q:
+        query = query.filter(Clinic.name.ilike(f"%{q}%"))
+    if source != "all":
+        query = query.filter(Clinic.source_type == source)
+    if with_coords:
+        query = query.filter(Clinic.lat.isnot(None), Clinic.lng.isnot(None))
+    return {"count": query.scalar() or 0}
+
+
 @app.get("/api/clinics/{clinic_id}")
 def clinic_card(clinic_id: int, limit: int = Query(300, le=2000), db: Session = Depends(get_db)):
     """Карточка клиники: контакты + все её услуги с ценами (одна на услугу)."""
