@@ -397,7 +397,7 @@ import os as _os
 import urllib.request as _urlreq
 import urllib.error as _urlerr
 
-from .ops_models import ParseRun, ParseError, RawPriceItem, LearnedMatch
+from .ops_models import ParseRun, ParseError, RawPriceItem, LearnedMatch, ParseSource
 
 
 @app.get("/api/admin/me")
@@ -503,6 +503,85 @@ def parse_run_trigger(body: ParseRunBody, staff: dict = Depends(verify_staff),
     db.commit()
     db.refresh(run)
     return {"status": "queued", "run": _run_out(run)}
+
+
+# ---------- источники парсинга (ТЗ §3.1: управление целевыми сайтами) ----------
+def _source_out(s: ParseSource) -> dict:
+    return {
+        "id": s.id, "kind": s.kind, "value": s.value, "label": s.label,
+        "enabled": s.enabled, "note": s.note,
+        "last_run_at": s.last_run_at.isoformat() if s.last_run_at else None,
+        "last_count": s.last_count,
+        "frontier_size": 9248 if s.kind == "frontier" else None,
+    }
+
+
+@app.get("/api/admin/sources")
+def sources_list(staff: dict = Depends(verify_staff), db: Session = Depends(get_db)):
+    """Список источников парсинга."""
+    rows = db.query(ParseSource).order_by(ParseSource.kind.desc(), ParseSource.id).all()
+    return [_source_out(s) for s in rows]
+
+
+class SourceCreate(BaseModel):
+    value: str                       # хост, напр. kdl.103.kz
+    label: Optional[str] = None
+    note: Optional[str] = None
+
+
+@app.post("/api/admin/sources")
+def sources_add(body: SourceCreate, staff: dict = Depends(verify_staff),
+                db: Session = Depends(get_db)):
+    """Добавить отдельный сайт-источник (kind='host')."""
+    host = body.value.strip().replace("https://", "").replace("http://", "").strip("/")
+    if not host:
+        raise HTTPException(400, "Пустой адрес источника")
+    if db.query(ParseSource).filter(ParseSource.value == host).first():
+        raise HTTPException(409, "Такой источник уже есть")
+    s = ParseSource(kind="host", value=host, label=body.label or host, note=body.note,
+                    enabled=True, added_by=staff.get("user_id"))
+    db.add(s)
+    db.commit()
+    db.refresh(s)
+    return _source_out(s)
+
+
+class SourcePatch(BaseModel):
+    enabled: Optional[bool] = None
+    label: Optional[str] = None
+    note: Optional[str] = None
+
+
+@app.patch("/api/admin/sources/{source_id}")
+def sources_patch(source_id: int, body: SourcePatch, staff: dict = Depends(verify_staff),
+                  db: Session = Depends(get_db)):
+    """Включить/выключить или отредактировать источник."""
+    s = db.query(ParseSource).get(source_id)
+    if not s:
+        raise HTTPException(404, "Источник не найден")
+    if body.enabled is not None:
+        s.enabled = body.enabled
+    if body.label is not None:
+        s.label = body.label
+    if body.note is not None:
+        s.note = body.note
+    db.commit()
+    db.refresh(s)
+    return _source_out(s)
+
+
+@app.delete("/api/admin/sources/{source_id}")
+def sources_delete(source_id: int, staff: dict = Depends(verify_staff),
+                   db: Session = Depends(get_db)):
+    """Удалить источник. Авто-источник 103.kz (frontier) удалять нельзя — только выключить."""
+    s = db.query(ParseSource).get(source_id)
+    if not s:
+        raise HTTPException(404, "Источник не найден")
+    if s.kind == "frontier":
+        raise HTTPException(400, "Базовый источник 103.kz нельзя удалить — выключите его вместо удаления.")
+    db.delete(s)
+    db.commit()
+    return {"status": "deleted", "id": source_id}
 
 
 # ---------- очередь ручной разметки (ТЗ §3.2) ----------

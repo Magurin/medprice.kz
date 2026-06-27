@@ -319,7 +319,31 @@ export const adminApi = {
       token,
       { raw_name }
     ),
+
+  // источники парсинга (ТЗ §3.1)
+  sources: (token: string) => authReq<ParseSourceRow[]>("GET", "/api/admin/sources", token),
+  addSource: (token: string, body: { value: string; label?: string; note?: string }) =>
+    authReq<ParseSourceRow>("POST", "/api/admin/sources", token, body),
+  patchSource: (
+    token: string,
+    id: number,
+    body: { enabled?: boolean; label?: string; note?: string }
+  ) => authReq<ParseSourceRow>("PATCH", `/api/admin/sources/${id}`, token, body),
+  deleteSource: (token: string, id: number) =>
+    authReq<{ status: string; id: number }>("DELETE", `/api/admin/sources/${id}`, token),
 };
+
+export interface ParseSourceRow {
+  id: number;
+  kind: string; // frontier | host
+  value: string;
+  label: string | null;
+  enabled: boolean;
+  note: string | null;
+  last_run_at: string | null;
+  last_count: number | null;
+  frontier_size: number | null;
+}
 
 export const tenge = (n: number) => `${n.toLocaleString("ru-RU")} ₸`;
 

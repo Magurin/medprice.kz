@@ -13,11 +13,27 @@ Base.metadata.drop_all()/create_all() и пересобирает витрину
                     price_offers. content_hash UNIQUE = дедупликация при повторном запуске.
 """
 from sqlalchemy import (
-    Column, DateTime, ForeignKey, Integer, String, Text, func,
+    Boolean, Column, DateTime, ForeignKey, Integer, String, Text, func,
 )
 from sqlalchemy.orm import declarative_base
 
 OpsBase = declarative_base()
+
+
+class ParseSource(OpsBase):
+    """Источник парсинга, управляемый из админки (ТЗ §3.1).
+    kind='frontier' — весь авто-список 103.kz (frontier.txt); kind='host' — отдельный сайт/хост."""
+    __tablename__ = "parse_sources"
+    id = Column(Integer, primary_key=True)
+    kind = Column(String, default="host")          # frontier | host
+    value = Column(String)                          # '103.kz' для frontier, иначе хост
+    label = Column(String)
+    enabled = Column(Boolean, default=True, index=True)
+    note = Column(String)
+    added_by = Column(String)
+    created_at = Column(DateTime, server_default=func.now())
+    last_run_at = Column(DateTime)
+    last_count = Column(Integer)                     # строк собрано в последний прогон
 
 
 class ParseRun(OpsBase):

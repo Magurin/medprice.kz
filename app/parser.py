@@ -79,14 +79,41 @@ def _import_harvester():
     return harvest
 
 
-def _web_hosts(sources, limit):
-    if sources:
-        return sources
+def _frontier_hosts():
+    """Все хосты из авто-списка 103.kz (harvester/frontier.txt)."""
     frontier = os.path.join(ROOT, "harvester", "frontier.txt")
     if not os.path.exists(frontier):
         return []
-    hosts = [h.strip() for h in open(frontier, encoding="utf-8") if h.strip()]
-    return hosts[:limit] if limit else hosts
+    return [h.strip() for h in open(frontier, encoding="utf-8") if h.strip()]
+
+
+def _enabled_web_hosts(db, limit):
+    """Хосты из включённых источников parse_sources: frontier -> весь список, host -> сам хост.
+    Если в БД ничего/таблицы нет — откат к frontier.txt (обратная совместимость)."""
+    from .ops_models import ParseSource
+    hosts = []
+    try:
+        for s in db.query(ParseSource).filter(ParseSource.enabled.is_(True)).all():
+            if s.kind == "frontier":
+                hosts.extend(_frontier_hosts())
+            elif s.value:
+                hosts.append(s.value.strip())
+    except Exception:
+        hosts = []
+    # дедуп с сохранением порядка
+    seen, out = set(), []
+    for h in hosts:
+        if h and h not in seen:
+            seen.add(h); out.append(h)
+    if not out:
+        out = _frontier_hosts()
+    return out[:limit] if limit else out
+
+
+def _web_hosts(db, sources, limit):
+    if sources:                       # явные хосты из UI/CLI --hosts
+        return sources
+    return _enabled_web_hosts(db, limit)
 
 
 def _parse_web_source(harvest, host):
@@ -156,8 +183,17 @@ def run_parse(kind: str, sources=None, limit: int = 50, trigger: str = "manual")
 
     if kind == "web":
         harvest = _import_harvester()
-        items = _web_hosts(sources, limit)
+        items = _web_hosts(db, sources, limit)
         handler = lambda s: _parse_web_source(harvest, s)
+        if not sources:  # прогон по источникам из БД — отметим их как использованные
+            try:
+                from .ops_models import ParseSource
+                now = dt.datetime.now(dt.timezone.utc)
+                for s in db.query(ParseSource).filter(ParseSource.enabled.is_(True)).all():
+                    s.last_run_at = now
+                db.commit()
+            except Exception:
+                db.rollback()
     elif kind == "file":
         items = _expand_paths(sources or [])
         handler = _parse_file_source

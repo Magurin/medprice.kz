@@ -12,6 +12,7 @@ import { useAuth } from "@/lib/auth";
 const ADMIN_LINKS = [
   { href: "/admin", label: "Обзор" },
   { href: "/admin/parser", label: "Парсер" },
+  { href: "/admin/sources", label: "Источники" },
   { href: "/admin/queue", label: "Очередь разметки" },
 ];
 
