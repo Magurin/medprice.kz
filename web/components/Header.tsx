@@ -11,8 +11,14 @@ export default function Header() {
   const pathname = usePathname();
   const basket = useBasket();
   const { user, username, email, signOut, loading, isStaff } = useAuth();
-  const isActive = (href: string) =>
-    href === "/" ? pathname === "/" : pathname.startsWith(href);
+  // активна только ссылка с самым длинным совпадающим префиксом —
+  // иначе на /clinics/list подсветились бы и «Карта» (/clinics), и «Клиники».
+  const bestMatch = SECTION_LINKS.reduce<string | null>((best, l) => {
+    const ok = l.href === "/" ? pathname === "/" : pathname === l.href || pathname.startsWith(l.href + "/");
+    if (!ok) return best;
+    return best && best.length >= l.href.length ? best : l.href;
+  }, null);
+  const isActive = (href: string) => href === bestMatch;
   const who = username || email?.split("@")[0] || "аккаунт";
 
   return (

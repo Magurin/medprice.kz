@@ -11,7 +11,6 @@ import { useAuth } from "@/lib/auth";
 // потому что FastAPI ходит в БД мимо RLS. Здесь просто не пускаем и прячем.
 const ADMIN_LINKS = [
   { href: "/admin", label: "Обзор" },
-  { href: "/admin/clinics", label: "Клиники" },
   { href: "/admin/parser", label: "Парсер" },
   { href: "/admin/sources", label: "Источники" },
   { href: "/admin/queue", label: "Очередь разметки" },

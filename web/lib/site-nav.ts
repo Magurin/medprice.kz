@@ -2,6 +2,7 @@ export const SECTION_LINKS = [
   { href: "/", label: "Поиск" },
   { href: "/search", label: "Каталог" },
   { href: "/clinics", label: "Карта" },
+  { href: "/clinics/list", label: "Клиники" },
   { href: "/compare", label: "Сравнение" },
   { href: "/price-check", label: "Проверить прайс" },
 ] as const;

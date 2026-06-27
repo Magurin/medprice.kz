@@ -1,15 +1,18 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { api, CityRow, ClinicRow, cityLabel } from "@/lib/api";
 import Rating from "@/components/Rating";
 import CityPicker from "@/components/CityPicker";
 
-export default function AdminClinicsPage() {
+const LIMIT = 500;
+
+export default function ClinicsListPage() {
   const [cities, setCities] = useState<CityRow[]>([]);
   const [city, setCity] = useState("");
   const [q, setQ] = useState("");
+  const [dq, setDq] = useState(""); // q с задержкой -> идёт в запрос
   const [clinics, setClinics] = useState<ClinicRow[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -17,35 +20,33 @@ export default function AdminClinicsPage() {
     api.cities().then(setCities).catch(() => {});
   }, []);
 
-  // в модерке показываем ВСЕ клиники (не только геокодированные)
+  // дебаунс поиска: клиник тысячи, фильтруем на сервере, а не в браузере
+  useEffect(() => {
+    const t = setTimeout(() => setDq(q.trim()), 300);
+    return () => clearTimeout(t);
+  }, [q]);
+
   useEffect(() => {
     setLoading(true);
     api
-      .clinics({ city: city || undefined, limit: 2000 })
+      .clinics({ city: city || undefined, q: dq || undefined, limit: LIMIT })
       .then(setClinics)
       .catch(() => setClinics([]))
       .finally(() => setLoading(false));
-  }, [city]);
+  }, [city, dq]);
 
-  const filtered = useMemo(() => {
-    const needle = q.trim().toLowerCase();
-    if (!needle) return clinics;
-    return clinics.filter(
-      (c) =>
-        c.name.toLowerCase().includes(needle) ||
-        (c.address ?? "").toLowerCase().includes(needle)
-    );
-  }, [clinics, q]);
+  const capped = clinics.length >= LIMIT;
 
   return (
-    <div>
-      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold text-foreground">Клиники</h2>
-          <p className="text-sm text-muted">
-            {loading ? "Загрузка…" : `${filtered.length} клиник${city ? ` · ${city}` : ""}`}
-          </p>
-        </div>
+    <div className="mx-auto max-w-3xl px-4 py-7">
+      <div className="mb-4">
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Клиники</h1>
+        <p className="mt-1 text-sm text-muted">
+          {loading
+            ? "Загрузка…"
+            : `${clinics.length}${capped ? "+" : ""} клиник${city ? ` · ${city}` : ""}`}
+          {capped && " · уточните поиск, чтобы найти нужную"}
+        </p>
       </div>
 
       <div className="mb-4 flex flex-wrap gap-2">
@@ -53,16 +54,16 @@ export default function AdminClinicsPage() {
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="Поиск по названию или адресу…"
-          className="min-w-[220px] flex-1 rounded-lg border border-line bg-surface px-3 py-2 text-sm text-foreground placeholder:text-faint"
+          placeholder="Поиск по названию…"
+          className="min-w-[220px] flex-1 rounded-lg border border-line bg-surface px-3 py-2 text-sm text-foreground placeholder:text-faint outline-none transition-colors focus:border-brand"
         />
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-line bg-surface">
-        {filtered.map((c) => (
+        {clinics.map((c) => (
           <Link
             key={c.id}
-            href={`/admin/clinics/${c.id}`}
+            href={`/clinics/${c.id}`}
             className="flex items-center gap-3 border-b border-line px-4 py-3 last:border-0 transition-colors hover:bg-surface2"
           >
             <div className="min-w-0 flex-1">
@@ -80,13 +81,11 @@ export default function AdminClinicsPage() {
             </svg>
           </Link>
         ))}
-        {!loading && filtered.length === 0 && (
+        {loading && <div className="px-4 py-10 text-center text-sm text-muted">Загрузка…</div>}
+        {!loading && clinics.length === 0 && (
           <div className="px-4 py-10 text-center text-sm text-muted">
-            {q.trim() ? "Ничего не нашлось по запросу." : "Нет клиник."}
+            {dq ? "Ничего не нашлось по запросу." : "Нет клиник."}
           </div>
-        )}
-        {loading && (
-          <div className="px-4 py-10 text-center text-sm text-muted">Загрузка…</div>
         )}
       </div>
     </div>
