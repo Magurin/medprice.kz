@@ -5,3 +5,12 @@
 # ASGI-сервер + продакшн-менеджер процессов (на Vercel не нужны — там свой рантайм):
 uvicorn[standard]==0.32.*
 gunicorn==23.*
+
+# Разбор прайс-файлов из админки (импорт HTML/PDF/DOCX/Excel модераторами).
+# Импорты в app/fileparse.py и app/pdfparse.py ленивые, но на VM эти пакеты нужны
+# в рантайме (в отличие от harvester, который крутится на GitHub-раннере).
+openpyxl==3.*
+xlrd==2.*
+pymupdf==1.*
+beautifulsoup4==4.*
+lxml==5.*

@@ -156,6 +156,52 @@ def parse_xls(path):
     return recs
 
 
+# ---------- HTML (страница прайса / выгрузка) ----------
+def parse_html_string(html: str):
+    """Разбор HTML-прайса: каждую <table> превращаем в строки и прогоняем общим
+    распознавателем. Если таблиц нет/пусто — запасной путь по строкам текста
+    (название … цена в одной строке). Зависит от bs4 (импорт ленивый)."""
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(html, "lxml")
+    recs = []
+    for tbl in soup.find_all("table"):
+        rows = []
+        for tr in tbl.find_all("tr"):
+            cells = [c.get_text(" ", strip=True) for c in tr.find_all(["td", "th"])]
+            if any(cells):
+                rows.append(cells)
+        if rows:
+            recs += _rows_to_records(rows)
+    if recs:
+        return recs
+    # запасной путь: списки/строки «Название … 1 200 ₸»
+    section = None
+    for el in soup.find_all(["li", "p", "div", "tr"]):
+        line = el.get_text(" ", strip=True)
+        if not line or len(line) < 4:
+            continue
+        price = None
+        m = re.search(r"(\d[\d  ]{2,}[.,]?\d*)\s*(?:₸|тг|тенге|kzt)?\s*$", line, re.I)
+        if m:
+            price = to_price(m.group(1))
+        if not price:
+            if is_section(line):
+                section = line
+            continue
+        name = line[: m.start()].strip(" .:–—-\t")
+        if not name or len(name) < 4 or not re.search(r"[А-Яа-яA-Za-z]{3,}", name):
+            continue
+        recs.append({"section": section, "code": find_code(name), "raw_name": name,
+                     "unit": None, "price": price, "tiers": [price], "currency": "KZT"})
+    return recs
+
+
+def parse_html(path):
+    with open(path, "rb") as f:
+        raw = f.read()
+    return parse_html_string(raw.decode("utf-8", "ignore"))
+
+
 # ---------- Word (.docx) ----------
 def parse_docx(path):
     with zipfile.ZipFile(path) as z:
@@ -210,7 +256,36 @@ def parse_file(path):
         return parse_xls(path)
     if p.endswith(".docx"):
         return parse_docx(path)
+    if p.endswith((".html", ".htm")):
+        return parse_html(path)
     if p.endswith(".pdf"):
         from .pdfparse import parse_pdf
         return parse_pdf(path)
     return []
+
+
+# поддерживаемые расширения прайсов (для валидации загрузки в админке)
+SUPPORTED_EXT = (".xlsx", ".xls", ".docx", ".pdf", ".html", ".htm")
+
+
+def parse_bytes(data: bytes, filename: str):
+    """Разобрать прайс из байтов загруженного файла. Тип — по расширению имени.
+    Пишем во временный файл (парсеры работают с путями), затем удаляем."""
+    import os
+    import tempfile
+    ext = os.path.splitext(filename or "")[1].lower()
+    if ext not in SUPPORTED_EXT:
+        raise ValueError(
+            f"Неподдерживаемый формат «{ext or '?'}». "
+            f"Допустимы: {', '.join(SUPPORTED_EXT)}."
+        )
+    fd, tmp = tempfile.mkstemp(suffix=ext)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        return parse_file(tmp)
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass

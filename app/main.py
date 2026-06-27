@@ -14,10 +14,10 @@ import statistics
 import time as _time
 from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from sqlalchemy import case, func
+from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session
 
 from .database import get_db
@@ -786,6 +786,533 @@ def admin_unmatched_skip(body: SkipBody, staff: dict = Depends(verify_staff),
                             occurrences=n, added_by=staff.get("user_id")))
     db.commit()
     return {"status": "skipped", "raw_name": body.raw_name, "rows_closed": n}
+
+
+# ============================================================================
+# Ручное ведение каталога модераторами (ТЗ §3.2): клиники, услуги, цены + импорт
+#   прайс-листов (HTML / PDF / DOCX / Excel) с авто-распознаванием и правкой.
+# Все данные пишутся в основную витрину с пометкой source_type='manual'|'file',
+# чтобы переживать пересборку ingest (см. app/ingest.py: DELETE только 'web').
+# ============================================================================
+from .fileparse import parse_bytes, parse_html_string, SUPPORTED_EXT
+
+MAX_UPLOAD = 25 * 1024 * 1024  # 25 МБ на прайс-файл
+
+
+def _slug_host(name: str) -> str:
+    base = "manual-" + normalize(name).replace(" ", "-")[:60]
+    return base.strip("-") or "manual-clinic"
+
+
+def _next_id(db, model):
+    """Следующий id для таблиц без sequence (cities/clinics заполняются явным id —
+    их PK без DEFAULT, sequence создать нельзя: loader не владелец таблиц)."""
+    return (db.query(func.coalesce(func.max(model.id), 0)).scalar() or 0) + 1
+
+
+def _ensure_city(db, name):
+    name = (name or "").strip()
+    if not name:
+        return None
+    c = db.query(City).filter(City.name == name).first()
+    if not c:
+        c = City(id=_next_id(db, City), name=name)
+        db.add(c)
+        db.flush()
+    return c.id
+
+
+def _ensure_service(db, code=None, name=None, category=None, method="manual",
+                    curated=False):
+    """Найти услугу по коду или создать новую (для ручной привязки/импорта)."""
+    if code:
+        s = db.query(Service).filter(Service.code == code).first()
+        if s:
+            return s
+    if not code:
+        if not name:
+            return None
+        code = "manual:" + normalize(name)
+        s = db.query(Service).filter(Service.code == code).first()
+        if s:
+            return s
+    s = Service(code=code, name=(name or code), category=(category or "Прочее"),
+                is_curated=curated, match_method=method, n_offers=0, n_clinics=0)
+    db.add(s)
+    db.flush()
+    return s
+
+
+# ---------- клиники ----------
+def _clinic_admin_out(c: Clinic, city_name=None, n_offers=None) -> dict:
+    return {
+        "id": c.id, "host": c.host, "name": c.name,
+        "city": city_name, "city_id": c.city_id, "address": c.address,
+        "phone": c.phone, "working_hours": c.working_hours,
+        "source_url": c.source_url, "source_type": c.source_type,
+        "lat": c.lat, "lng": c.lng, "rating": c.rating,
+        "reviews_count": c.reviews_count, "n_offers": n_offers,
+    }
+
+
+@app.get("/api/admin/clinics")
+def admin_clinics(q: Optional[str] = None, limit: int = Query(50, le=200),
+                  offset: int = Query(0, ge=0), staff: dict = Depends(verify_staff),
+                  db: Session = Depends(get_db)):
+    """Список клиник для модерации (поиск по названию/host)."""
+    base = db.query(Clinic, City.name).outerjoin(City, City.id == Clinic.city_id)
+    if q:
+        like = f"%{q.strip()}%"
+        base = base.filter(or_(Clinic.name.ilike(like), Clinic.host.ilike(like)))
+    total = base.count()
+    rows = base.order_by(Clinic.name).offset(offset).limit(limit).all()
+    ids = [c.id for c, _ in rows]
+    counts = dict(
+        db.query(PriceOffer.clinic_id, func.count())
+        .filter(PriceOffer.clinic_id.in_(ids)).group_by(PriceOffer.clinic_id).all()
+    ) if ids else {}
+    return {
+        "total": total, "limit": limit, "offset": offset,
+        "items": [_clinic_admin_out(c, cn, counts.get(c.id, 0)) for c, cn in rows],
+    }
+
+
+class ClinicCreate(BaseModel):
+    name: str
+    city: Optional[str] = None
+    address: Optional[str] = None
+    phone: Optional[str] = None
+    working_hours: Optional[str] = None
+    source_url: Optional[str] = None
+    host: Optional[str] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+
+
+@app.post("/api/admin/clinics")
+def admin_clinic_create(body: ClinicCreate, staff: dict = Depends(verify_staff),
+                        db: Session = Depends(get_db)):
+    """Добавить клинику вручную (source_type='manual')."""
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(400, "Укажите название клиники")
+    host = (body.host or "").strip().lower().replace("https://", "").replace("http://", "").strip("/")
+    if host:
+        if db.query(Clinic).filter(Clinic.host == host).first():
+            raise HTTPException(409, "Клиника с таким адресом (host) уже есть")
+    else:
+        base = _slug_host(name)
+        host, i = base, 1
+        while db.query(Clinic).filter(Clinic.host == host).first():
+            i += 1
+            host = f"{base}-{i}"
+    c = Clinic(
+        id=_next_id(db, Clinic),
+        host=host, name=name, city_id=_ensure_city(db, body.city),
+        address=body.address, phone=body.phone, working_hours=body.working_hours,
+        source_url=body.source_url, source_type="manual", lat=body.lat, lng=body.lng,
+    )
+    db.add(c)
+    db.commit()
+    db.refresh(c)
+    return _clinic_admin_out(c, body.city, 0)
+
+
+class ClinicPatch(BaseModel):
+    name: Optional[str] = None
+    city: Optional[str] = None
+    address: Optional[str] = None
+    phone: Optional[str] = None
+    working_hours: Optional[str] = None
+    source_url: Optional[str] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+
+
+@app.patch("/api/admin/clinics/{clinic_id}")
+def admin_clinic_patch(clinic_id: int, body: ClinicPatch,
+                       staff: dict = Depends(verify_staff), db: Session = Depends(get_db)):
+    """Поправить данные клиники (если что-то не так)."""
+    c = db.query(Clinic).get(clinic_id)
+    if not c:
+        raise HTTPException(404, "Клиника не найдена")
+    if body.name is not None:
+        c.name = body.name.strip() or c.name
+    if body.city is not None:
+        c.city_id = _ensure_city(db, body.city)
+    for f in ("address", "phone", "working_hours", "source_url", "lat", "lng"):
+        v = getattr(body, f)
+        if v is not None:
+            setattr(c, f, v)
+    db.commit()
+    db.refresh(c)
+    cn = db.query(City.name).filter(City.id == c.city_id).scalar() if c.city_id else None
+    n = db.query(func.count(PriceOffer.id)).filter(PriceOffer.clinic_id == c.id).scalar()
+    return _clinic_admin_out(c, cn, n)
+
+
+@app.delete("/api/admin/clinics/{clinic_id}")
+def admin_clinic_delete(clinic_id: int, staff: dict = Depends(verify_staff),
+                        db: Session = Depends(get_db)):
+    """Удалить клинику вместе с её ценами, историей и подписками."""
+    c = db.query(Clinic).get(clinic_id)
+    if not c:
+        raise HTTPException(404, "Клиника не найдена")
+    svc_ids = [r[0] for r in db.query(func.distinct(PriceOffer.service_id))
+               .filter(PriceOffer.clinic_id == clinic_id).all()]
+    db.query(PriceOffer).filter(PriceOffer.clinic_id == clinic_id).delete()
+    db.query(PriceHistory).filter(PriceHistory.clinic_id == clinic_id).delete()
+    db.query(Subscription).filter(Subscription.clinic_id == clinic_id).delete()
+    db.query(UnmatchedItem).filter(UnmatchedItem.clinic_id == clinic_id).delete()
+    db.delete(c)
+    db.commit()
+    for sid in svc_ids:
+        _refresh_service_counts(db, sid)
+    db.commit()
+    return {"status": "deleted", "id": clinic_id}
+
+
+# ---------- услуги (канонический справочник) ----------
+class ServiceCreate(BaseModel):
+    name: str
+    category: Optional[str] = None
+    code: Optional[str] = None
+
+
+@app.post("/api/admin/services")
+def admin_service_create(body: ServiceCreate, staff: dict = Depends(verify_staff),
+                         db: Session = Depends(get_db)):
+    """Создать каноническую услугу вручную."""
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(400, "Укажите название услуги")
+    code = (body.code or "").strip() or ("manual:" + normalize(name))
+    if db.query(Service).filter(Service.code == code).first():
+        raise HTTPException(409, "Услуга с таким кодом уже есть")
+    s = Service(code=code, name=name, category=(body.category or "Прочее"),
+                is_curated=True, match_method="manual", n_offers=0, n_clinics=0)
+    db.add(s)
+    db.commit()
+    db.refresh(s)
+    return {"id": s.id, "code": s.code, "name": s.name, "category": s.category}
+
+
+class ServicePatch(BaseModel):
+    name: Optional[str] = None
+    category: Optional[str] = None
+
+
+@app.patch("/api/admin/services/{service_id}")
+def admin_service_patch(service_id: int, body: ServicePatch,
+                        staff: dict = Depends(verify_staff), db: Session = Depends(get_db)):
+    """Поправить название/категорию услуги."""
+    s = db.query(Service).get(service_id)
+    if not s:
+        raise HTTPException(404, "Услуга не найдена")
+    if body.name is not None and body.name.strip():
+        s.name = body.name.strip()
+    if body.category is not None:
+        s.category = body.category.strip() or s.category
+    db.commit()
+    db.refresh(s)
+    return {"id": s.id, "code": s.code, "name": s.name, "category": s.category}
+
+
+# ---------- цены клиники (ручная правка) ----------
+def _offer_out(o: PriceOffer, s: Service) -> dict:
+    return {
+        "id": o.id, "raw_name": o.raw_name, "price": o.price,
+        "on_request": o.on_request, "is_from": o.is_from,
+        "source_type": o.source_type, "match_method": o.match_method,
+        "service_code": s.code if s else None,
+        "service_name": s.name if s else None,
+        "category": s.category if s else None,
+    }
+
+
+@app.get("/api/admin/clinics/{clinic_id}/offers")
+def admin_clinic_offers(clinic_id: int, staff: dict = Depends(verify_staff),
+                        db: Session = Depends(get_db)):
+    """Все цены клиники с привязкой к услуге (для правки)."""
+    c = db.query(Clinic).get(clinic_id)
+    if not c:
+        raise HTTPException(404, "Клиника не найдена")
+    rows = (db.query(PriceOffer, Service)
+            .join(Service, Service.id == PriceOffer.service_id)
+            .filter(PriceOffer.clinic_id == clinic_id)
+            .order_by(PriceOffer.raw_name).all())
+    return {"clinic_id": clinic_id, "clinic": c.name,
+            "offers": [_offer_out(o, s) for o, s in rows]}
+
+
+class OfferCreate(BaseModel):
+    clinic_id: int
+    raw_name: str
+    price: Optional[int] = None
+    service_code: Optional[str] = None   # привязать к существующей услуге
+    service_name: Optional[str] = None   # либо создать новую с этим названием
+    category: Optional[str] = None
+
+
+@app.post("/api/admin/offers")
+def admin_offer_create(body: OfferCreate, staff: dict = Depends(verify_staff),
+                       db: Session = Depends(get_db)):
+    """Добавить услугу+цену клинике вручную."""
+    c = db.query(Clinic).get(body.clinic_id)
+    if not c:
+        raise HTTPException(404, "Клиника не найдена")
+    raw = (body.raw_name or "").strip()
+    if not raw:
+        raise HTTPException(400, "Укажите название услуги в прайсе")
+    if body.service_code:
+        svc = _ensure_service(db, code=body.service_code, name=body.service_name,
+                              category=body.category)
+    elif body.service_name:
+        svc = _ensure_service(db, name=body.service_name, category=body.category)
+    else:
+        m = _matcher.match(raw)
+        svc = _ensure_service(db, code=m["code"], name=m["name"],
+                              category=m["category"], method=m["method"])
+    if not svc:
+        raise HTTPException(400, "Не удалось определить услугу")
+    o = PriceOffer(
+        clinic_id=c.id, service_id=svc.id, raw_name=raw, price=body.price,
+        currency="KZT", on_request=(body.price is None), match_method="manual",
+        match_score=1.0, source_type="manual",
+        parsed_at=dt.datetime.now(dt.timezone.utc), is_active=True,
+    )
+    db.add(o)
+    db.commit()
+    _refresh_service_counts(db, svc.id)
+    db.commit()
+    db.refresh(o)
+    return _offer_out(o, svc)
+
+
+class OfferPatch(BaseModel):
+    raw_name: Optional[str] = None
+    price: Optional[int] = None
+    on_request: Optional[bool] = None
+    service_code: Optional[str] = None   # перепривязать к другой услуге
+
+
+@app.patch("/api/admin/offers/{offer_id}")
+def admin_offer_patch(offer_id: int, body: OfferPatch,
+                      staff: dict = Depends(verify_staff), db: Session = Depends(get_db)):
+    """Поправить цену/название/привязку строки прайса."""
+    o = db.query(PriceOffer).get(offer_id)
+    if not o:
+        raise HTTPException(404, "Строка прайса не найдена")
+    old_sid = o.service_id
+    if body.raw_name is not None and body.raw_name.strip():
+        o.raw_name = body.raw_name.strip()
+    if body.price is not None:
+        o.price = body.price
+        o.on_request = False
+    if body.on_request is not None:
+        o.on_request = body.on_request
+        if body.on_request:
+            o.price = None
+    if body.service_code:
+        svc = db.query(Service).filter(Service.code == body.service_code).first()
+        if not svc:
+            raise HTTPException(404, "Услуга с таким кодом не найдена")
+        o.service_id = svc.id
+    db.commit()
+    if o.service_id != old_sid:
+        _refresh_service_counts(db, old_sid)
+    _refresh_service_counts(db, o.service_id)
+    db.commit()
+    s = db.query(Service).get(o.service_id)
+    return _offer_out(o, s)
+
+
+@app.delete("/api/admin/offers/{offer_id}")
+def admin_offer_delete(offer_id: int, staff: dict = Depends(verify_staff),
+                       db: Session = Depends(get_db)):
+    """Удалить строку прайса."""
+    o = db.query(PriceOffer).get(offer_id)
+    if not o:
+        raise HTTPException(404, "Строка прайса не найдена")
+    sid = o.service_id
+    db.delete(o)
+    db.commit()
+    _refresh_service_counts(db, sid)
+    db.commit()
+    return {"status": "deleted", "id": offer_id}
+
+
+# ---------- импорт прайс-листов (HTML/PDF/DOCX/Excel) с авто-распознаванием ----------
+def _import_preview(db, recs: list, source: str) -> dict:
+    """Распознанные строки + авто-сопоставление с услугой (учитывая ручные решения)."""
+    learned = {lm.norm_key: lm for lm in db.query(LearnedMatch).all()}
+    rows, auto = [], 0
+    for r in recs:
+        nm = (r.get("raw_name") or "").strip()
+        if not nm:
+            continue
+        entry = {"raw_name": nm, "price": r.get("price"), "unit": r.get("unit"),
+                 "section": r.get("section"), "code": r.get("code"),
+                 "match": None, "known_skip": False}
+        lm = learned.get(normalize(nm))
+        if lm is not None and lm.service_code is None:
+            entry["known_skip"] = True            # ранее помечено «не услуга»
+        elif lm is not None and lm.service_code:
+            entry["match"] = {"code": lm.service_code, "name": lm.service_name,
+                              "category": lm.category, "method": "learned", "score": 1.0}
+            auto += 1
+        else:
+            m = _matcher.match(nm)
+            if m:
+                entry["match"] = {"code": m["code"], "name": m["name"],
+                                  "category": m["category"], "method": m["method"],
+                                  "score": m["score"]}
+                if m["method"] in ("curated", "curated_fuzzy"):
+                    auto += 1
+        rows.append(entry)
+    return {"source": source, "total": len(rows), "auto_matched": auto, "rows": rows}
+
+
+@app.post("/api/admin/import/parse")
+async def admin_import_parse(request: Request, filename: str = Query(...),
+                             staff: dict = Depends(verify_staff),
+                             db: Session = Depends(get_db)):
+    """Загрузить прайс-файл (тело запроса = байты файла, ?filename=…) и распознать.
+    Ничего не пишет в БД — только превью для правки модератором."""
+    data = await request.body()
+    if not data:
+        raise HTTPException(400, "Пустой файл")
+    if len(data) > MAX_UPLOAD:
+        raise HTTPException(413, "Файл больше 25 МБ")
+    try:
+        recs = parse_bytes(data, filename)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(422, f"Не удалось разобрать файл: {e}")
+    if not recs:
+        raise HTTPException(422, "В файле не найдено строк прайса (название + цена). "
+                                 "Проверьте формат или внесите услуги вручную.")
+    return _import_preview(db, recs, filename)
+
+
+class ImportUrlBody(BaseModel):
+    url: str
+
+
+@app.post("/api/admin/import/url")
+def admin_import_url(body: ImportUrlBody, staff: dict = Depends(verify_staff),
+                     db: Session = Depends(get_db)):
+    """Распознать прайс с открытой веб-страницы (или файла по ссылке)."""
+    url = (body.url or "").strip()
+    if not url.startswith(("http://", "https://")):
+        raise HTTPException(400, "Укажите http(s)-ссылку")
+    req = _urlreq.Request(url, headers={"User-Agent": "Mozilla/5.0 medprice-admin"})
+    try:
+        with _urlreq.urlopen(req, timeout=25) as r:
+            data = r.read(MAX_UPLOAD + 1)
+    except Exception as e:
+        raise HTTPException(502, f"Не удалось загрузить страницу: {e}")
+    if len(data) > MAX_UPLOAD:
+        raise HTTPException(413, "Страница/файл больше 25 МБ")
+    low = url.lower().split("?")[0]
+    try:
+        if low.endswith(SUPPORTED_EXT) and not low.endswith((".html", ".htm")):
+            recs = parse_bytes(data, low)
+        else:
+            recs = parse_html_string(data.decode("utf-8", "ignore"))
+    except Exception as e:
+        raise HTTPException(422, f"Не удалось разобрать страницу: {e}")
+    if not recs:
+        raise HTTPException(422, "На странице не найдено строк прайса (название + цена).")
+    return _import_preview(db, recs, url)
+
+
+class ImportRow(BaseModel):
+    raw_name: str
+    price: Optional[int] = None
+    service_code: Optional[str] = None   # подтверждённая услуга
+    service_name: Optional[str] = None   # имя для новой услуги
+    category: Optional[str] = None
+    create_new: bool = False             # создать новую каноническую услугу
+    skip: bool = False                   # не импортировать строку
+
+
+class ImportCommit(BaseModel):
+    clinic_id: int
+    source: Optional[str] = None
+    replace: bool = False                # заменить ранее импортированные цены клиники
+    rows: list[ImportRow]
+
+
+@app.post("/api/admin/import/commit")
+def admin_import_commit(body: ImportCommit, staff: dict = Depends(verify_staff),
+                        db: Session = Depends(get_db)):
+    """Записать выверенные строки прайса как цены клиники (source_type='file')."""
+    c = db.query(Clinic).get(body.clinic_id)
+    if not c:
+        raise HTTPException(404, "Клиника не найдена")
+    now = dt.datetime.now(dt.timezone.utc)
+    affected: set[int] = set()
+
+    if body.replace:
+        old = (db.query(PriceOffer)
+               .filter(PriceOffer.clinic_id == c.id,
+                       PriceOffer.source_type.in_(("file", "manual"))).all())
+        for o in old:
+            affected.add(o.service_id)
+            db.delete(o)
+
+    created, svc_created = 0, 0
+    for row in body.rows:
+        if row.skip:
+            continue
+        raw = (row.raw_name or "").strip()
+        if not raw:
+            continue
+        if row.create_new:
+            svc = _ensure_service(db, name=(row.service_name or raw),
+                                  category=row.category, method="manual")
+            if svc and svc.n_offers == 0:
+                svc_created += 1
+        elif row.service_code:
+            existed = db.query(Service.id).filter(Service.code == row.service_code).first()
+            svc = _ensure_service(db, code=row.service_code, name=row.service_name,
+                                  category=row.category)
+            if not existed and svc:
+                svc_created += 1
+        else:
+            continue  # не привязано — пропускаем
+        if not svc:
+            continue
+        db.add(PriceOffer(
+            clinic_id=c.id, service_id=svc.id, raw_name=raw, price=row.price,
+            currency="KZT", on_request=(row.price is None), match_method="import",
+            match_score=1.0, source_type="file", parsed_at=now, is_active=True,
+        ))
+        created += 1
+        affected.add(svc.id)
+        # запоминаем решение (переживает пересборку витрины)
+        nk = normalize(raw)
+        lm = db.query(LearnedMatch).filter(LearnedMatch.norm_key == nk).first()
+        if lm:
+            lm.service_code, lm.service_name, lm.category = svc.code, svc.name, svc.category
+            lm.occurrences = (lm.occurrences or 0) + 1
+            lm.added_by = staff.get("user_id")
+        else:
+            db.add(LearnedMatch(norm_key=nk, service_code=svc.code, service_name=svc.name,
+                                category=svc.category, raw_example=raw, occurrences=1,
+                                added_by=staff.get("user_id")))
+    db.commit()
+    for sid in affected:
+        _refresh_service_counts(db, sid)
+    db.add(ParseLog(source_file=(body.source or "импорт"), clinic=c.name,
+                    rows_total=len(body.rows), rows_matched=created,
+                    rows_unmatched=len(body.rows) - created,
+                    note=f"ручной импорт ({staff.get('role')})"))
+    db.commit()
+    return {"status": "imported", "clinic": c.name, "offers_created": created,
+            "services_created": svc_created}
 
 
 @app.get("/api/parse-log")

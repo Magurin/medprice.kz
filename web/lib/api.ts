@@ -365,7 +365,171 @@ export const adminApi = {
   ) => authReq<ParseSourceRow>("PATCH", `/api/admin/sources/${id}`, token, body),
   deleteSource: (token: string, id: number) =>
     authReq<{ status: string; id: number }>("DELETE", `/api/admin/sources/${id}`, token),
+
+  // --- ведение каталога модераторами: клиники / услуги / цены ---
+  clinics: (token: string, q?: string, limit = 50, offset = 0) =>
+    authReq<{ total: number; limit: number; offset: number; items: AdminClinic[] }>(
+      "GET",
+      `/api/admin/clinics${qs({ q, limit, offset })}`,
+      token
+    ),
+  createClinic: (token: string, body: ClinicInput) =>
+    authReq<AdminClinic>("POST", "/api/admin/clinics", token, body),
+  patchClinic: (token: string, id: number, body: Partial<ClinicInput>) =>
+    authReq<AdminClinic>("PATCH", `/api/admin/clinics/${id}`, token, body),
+  deleteClinic: (token: string, id: number) =>
+    authReq<{ status: string; id: number }>("DELETE", `/api/admin/clinics/${id}`, token),
+
+  createService: (token: string, body: { name: string; category?: string; code?: string }) =>
+    authReq<{ id: number; code: string; name: string; category: string | null }>(
+      "POST",
+      "/api/admin/services",
+      token,
+      body
+    ),
+  patchService: (token: string, id: number, body: { name?: string; category?: string }) =>
+    authReq<{ id: number; code: string; name: string; category: string | null }>(
+      "PATCH",
+      `/api/admin/services/${id}`,
+      token,
+      body
+    ),
+
+  clinicOffers: (token: string, clinicId: number) =>
+    authReq<{ clinic_id: number; clinic: string; offers: AdminOffer[] }>(
+      "GET",
+      `/api/admin/clinics/${clinicId}/offers`,
+      token
+    ),
+  createOffer: (
+    token: string,
+    body: {
+      clinic_id: number;
+      raw_name: string;
+      price?: number | null;
+      service_code?: string;
+      service_name?: string;
+      category?: string;
+    }
+  ) => authReq<AdminOffer>("POST", "/api/admin/offers", token, body),
+  patchOffer: (
+    token: string,
+    id: number,
+    body: { raw_name?: string; price?: number | null; on_request?: boolean; service_code?: string }
+  ) => authReq<AdminOffer>("PATCH", `/api/admin/offers/${id}`, token, body),
+  deleteOffer: (token: string, id: number) =>
+    authReq<{ status: string; id: number }>("DELETE", `/api/admin/offers/${id}`, token),
+
+  // --- импорт прайс-листов (HTML / PDF / DOCX / Excel) ---
+  importFile: async (token: string, file: File): Promise<ImportPreview> => {
+    // тело запроса = байты файла; имя кладём в query (без python-multipart на бэке)
+    const res = await fetch(`${API_BASE}/api/admin/import/parse${qs({ filename: file.name })}`, {
+      method: "POST",
+      cache: "no-store",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/octet-stream",
+      },
+      body: file,
+    });
+    if (!res.ok) {
+      let msg = `API ${res.status}`;
+      try {
+        const j = await res.json();
+        if (j.detail) msg = j.detail;
+      } catch {}
+      throw new Error(msg);
+    }
+    return res.json();
+  },
+  importUrl: (token: string, url: string) =>
+    authReq<ImportPreview>("POST", "/api/admin/import/url", token, { url }),
+  importCommit: (
+    token: string,
+    body: { clinic_id: number; source?: string; replace?: boolean; rows: ImportCommitRow[] }
+  ) =>
+    authReq<{ status: string; clinic: string; offers_created: number; services_created: number }>(
+      "POST",
+      "/api/admin/import/commit",
+      token,
+      body
+    ),
 };
+
+export interface AdminClinic {
+  id: number;
+  host: string;
+  name: string;
+  city: string | null;
+  city_id: number | null;
+  address: string | null;
+  phone: string | null;
+  working_hours: string | null;
+  source_url: string | null;
+  source_type: string | null;
+  lat: number | null;
+  lng: number | null;
+  rating: number | null;
+  reviews_count: number | null;
+  n_offers: number | null;
+}
+
+export interface ClinicInput {
+  name: string;
+  city?: string;
+  address?: string;
+  phone?: string;
+  working_hours?: string;
+  source_url?: string;
+  host?: string;
+  lat?: number | null;
+  lng?: number | null;
+}
+
+export interface AdminOffer {
+  id: number;
+  raw_name: string;
+  price: number | null;
+  on_request: boolean;
+  is_from: boolean;
+  source_type: string | null;
+  match_method: string | null;
+  service_code: string | null;
+  service_name: string | null;
+  category: string | null;
+}
+
+export interface ImportMatch {
+  code: string;
+  name: string;
+  category: string | null;
+  method: string;
+  score: number;
+}
+export interface ImportPreviewRow {
+  raw_name: string;
+  price: number | null;
+  unit: string | null;
+  section: string | null;
+  code: string | null;
+  match: ImportMatch | null;
+  known_skip: boolean;
+}
+export interface ImportPreview {
+  source: string;
+  total: number;
+  auto_matched: number;
+  rows: ImportPreviewRow[];
+}
+export interface ImportCommitRow {
+  raw_name: string;
+  price?: number | null;
+  service_code?: string;
+  service_name?: string;
+  category?: string;
+  create_new?: boolean;
+  skip?: boolean;
+}
 
 export interface ParseSourceRow {
   id: number;

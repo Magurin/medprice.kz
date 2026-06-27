@@ -151,7 +151,6 @@ def run():
     offer_rows = []
     priced_count = defaultdict(int)     # service_id -> кол-во цен
     clinics_of = defaultdict(set)       # service_id -> {clinic_id}
-    oid = 0
     method_stats = defaultdict(int)
 
     for o in _iter_jsonl(os.path.join(RAW, "offers.jsonl")):
@@ -170,10 +169,10 @@ def run():
             is_cur = m["method"] in ("curated", "curated_fuzzy")
             svc[code] = (sid, m["name"], m["category"], is_cur, m["method"])
         sid = svc[code][0]
-        oid += 1
         method_stats[m["method"]] += 1
         offer_rows.append({
-            "id": oid,
+            # id не задаём — его выдаст sequence price_offers_id_seq (см. ниже),
+            # чтобы не было коллизий с ручными/импортными строками (source_type!='web').
             "clinic_id": clinic_id,
             "service_id": sid,
             "raw_name": o["raw_name"],
@@ -223,10 +222,30 @@ def run():
             conn.execute(insert(models.City.__table__), new_city_rows)
         _upsert(conn, models.Clinic.__table__, clinic_rows, "host", _CLINIC_UPDATE)
         _upsert(conn, models.Service.__table__, service_rows, "code", _SERVICE_UPDATE)
-        # price_offers — без входящих FK: полностью пересобираем
-        conn.execute(text("DELETE FROM price_offers"))
+        # price_offers: пересобираем ТОЛЬКО веб-цены. Ручные/импортные строки
+        # (source_type 'manual'/'file', внесённые модераторами через админку)
+        # сохраняем — они не приходят из harvester и иначе были бы потеряны.
+        conn.execute(text("DELETE FROM price_offers WHERE source_type = 'web'"))
+        # sequence двигаем за максимум уцелевших id, чтобы новые web-строки (id из
+        # sequence) не столкнулись с сохранёнными ручными.
+        conn.execute(text(
+            "SELECT setval('price_offers_id_seq', "
+            "GREATEST((SELECT COALESCE(MAX(id), 0) FROM price_offers), 1))"
+        ))
         for batch in _chunks(offer_rows, 1000):
             conn.execute(insert(models.PriceOffer.__table__), batch)
+        # счётчики услуг считаем по ВСЕЙ таблице (включая ручные/импортные цены),
+        # иначе вклад модераторских строк не отразится в n_offers/n_clinics.
+        conn.execute(text("""
+            UPDATE services s SET
+                n_offers  = COALESCE(a.no, 0),
+                n_clinics = COALESCE(a.nc, 0)
+            FROM (
+                SELECT service_id, COUNT(*) AS no, COUNT(DISTINCT clinic_id) AS nc
+                FROM price_offers WHERE price IS NOT NULL GROUP BY service_id
+            ) a
+            WHERE s.id = a.service_id
+        """))
 
     comparable = sum(1 for code, (sid, *_) in svc.items() if len(clinics_of[sid]) >= 2)
     chains = sum(1 for k, n in brand_counts.items() if n >= 2)
