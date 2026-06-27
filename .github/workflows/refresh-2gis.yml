@@ -1,0 +1,40 @@
+name: refresh-2gis-ratings
+
+# Ежедневное обновление рейтингов/отзывов 2ГИС у клиник.
+# Требуются секреты репозитория:
+#   TWOGIS_KEY   — ключ Places API 2ГИС (dev.2gis.com)
+#   DATABASE_URL — postgresql://loader.<ref>:<pwd>@aws-1-eu-central-1.pooler.supabase.com:5432/postgres
+on:
+  schedule:
+    - cron: "0 3 * * *"   # каждый день в 03:00 UTC
+  workflow_dispatch: {}    # можно запустить вручную из вкладки Actions
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "psycopg[binary]==3.*"
+      - name: Enrich 2GIS ratings
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TWOGIS_KEY: ${{ secrets.TWOGIS_KEY }}
+          ENRICH_LIMIT: "400"    # бережно (демо-ключ); самые «протухшие» (rating_updated_at) первыми
+        run: python enrich_2gis.py
+
+      # Сбросить кэш каталога на фронте после обновления данных (раз в сутки).
+      # Нужны секреты SITE_URL и REVALIDATE_SECRET; без них шаг просто пропускается,
+      # а кэш всё равно протухнет по таймеру (revalidate = 24ч).
+      - name: Revalidate site catalog cache
+        env:
+          SITE_URL: ${{ secrets.SITE_URL }}
+          REVALIDATE_SECRET: ${{ secrets.REVALIDATE_SECRET }}
+        run: |
+          if [ -n "$SITE_URL" ] && [ -n "$REVALIDATE_SECRET" ]; then
+            curl -fsS -X POST "$SITE_URL/api/revalidate?secret=$REVALIDATE_SECRET"
+          else
+            echo "SITE_URL/REVALIDATE_SECRET не заданы — пропускаю чистку кэша (сработает таймер 24ч)."
+          fi
