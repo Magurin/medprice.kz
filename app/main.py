@@ -159,6 +159,21 @@ def _count_if(cond):
     return func.coalesce(func.sum(case((cond, 1), else_=0)), 0)
 
 
+# Байесовский (IMDB-style) рейтинг: оценка с большим числом отзывов весомее.
+# 4.9 при 1500 отзывах обходит 5.0 при 5 отзывах — количество тоже имеет вес.
+RATING_PRIOR_M = 40.0   # «вес» априорной оценки, выраженный в отзывах
+RATING_PRIOR_C = 4.6    # априорная средняя оценка по рынку
+
+
+def _weighted_rating_expr():
+    """ORDER BY-выражение: (v·R + m·C)/(v + m); клиники без оценки — в конец."""
+    v = func.coalesce(Clinic.reviews_count, 0)
+    return case(
+        (Clinic.rating.is_(None), -1.0),
+        else_=(v * Clinic.rating + RATING_PRIOR_M * RATING_PRIOR_C) / (v + RATING_PRIOR_M),
+    )
+
+
 @app.get("/api/stats")
 @ttl_cache(3600)
 def stats(db: Session = Depends(get_db)):
@@ -389,7 +404,8 @@ def clinics(
         query = query.filter(Clinic.lat.isnot(None), Clinic.lng.isnot(None))
     if min_rating > 0:
         query = query.filter(Clinic.rating >= min_rating)
-    rows = query.limit(limit).all()
+    # от лучших оценок к худшим, с учётом числа отзывов (байесовский вес)
+    rows = query.order_by(_weighted_rating_expr().desc(), Clinic.name.asc()).limit(limit).all()
     return [
         {"id": cl.id, "name": cl.name, "city": ct.name if ct else None, "address": cl.address,
          "host": cl.host, "source_url": cl.source_url, "source_type": cl.source_type,

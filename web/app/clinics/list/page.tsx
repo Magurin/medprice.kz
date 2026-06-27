@@ -69,7 +69,7 @@ export default function ClinicsListPage() {
 
       <div className="mb-4 flex items-center gap-1 text-sm">
         <span className="mr-1 text-faint">Рейтинг:</span>
-        {([[0, "любой"], [4, "4.0+"], [4.5, "4.5+"]] as [number, string][]).map(([v, label]) => (
+        {([[0, "все"], [4, "4.0+"], [4.5, "4.5+"]] as [number, string][]).map(([v, label]) => (
           <button
             key={v}
             onClick={() => setMinRating(v)}

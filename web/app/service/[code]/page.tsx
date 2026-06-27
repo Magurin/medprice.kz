@@ -39,10 +39,27 @@ function fmtKm(km: number) {
 // Релевантность = рейтинг 2ГИС (больший вес) + дешевизна.
 // У клиник без рейтинга берём нейтраль (~3.5/5), чтобы они не проваливались,
 // пока оценки 2ГИС не подтянутся ко всем. Пример: 5.0@2000 релевантнее, чем 2.0@1500.
-function relevance(price: number, rating: number | null | undefined, min: number, max: number) {
+// Байесовский (IMDB-style) рейтинг: оценка с большим числом отзывов весомее.
+// 4.9 при 1500 отзывах обходит 5.0 при 5 отзывах — количество тоже имеет вес.
+const RATING_PRIOR_M = 40; // «вес» априорной оценки, выраженный в отзывах
+const RATING_PRIOR_C = 4.6; // априорная средняя оценка по рынку
+
+function bayesRating(rating: number | null | undefined, reviews: number | null | undefined) {
+  if (rating == null) return RATING_PRIOR_C * 0.9; // без оценки — чуть ниже среднего
+  const v = reviews ?? 0;
+  return (v * rating + RATING_PRIOR_M * RATING_PRIOR_C) / (v + RATING_PRIOR_M);
+}
+
+function relevance(
+  price: number,
+  rating: number | null | undefined,
+  reviews: number | null | undefined,
+  min: number,
+  max: number,
+) {
   const span = max - min || 1;
   const cheap = (max - price) / span; // 0..1, дешевле = выше
-  const r = rating != null ? rating / 5 : 0.7; // 0..1
+  const r = bayesRating(rating, reviews) / 5; // 0..1, с учётом числа отзывов
   return 0.65 * r + 0.35 * cheap;
 }
 
@@ -148,7 +165,8 @@ export default function ServicePage() {
     } else
       list.sort(
         (a, b) =>
-          relevance(b.price, b.rating, min, max) - relevance(a.price, a.rating, min, max) ||
+          relevance(b.price, b.rating, b.reviews_count, min, max) -
+            relevance(a.price, a.rating, a.reviews_count, min, max) ||
           (b.reviews_count ?? 0) - (a.reviews_count ?? 0) ||
           a.price - b.price
       );
@@ -316,7 +334,7 @@ export default function ServicePage() {
             </div>
             <div className="flex items-center gap-1">
               <span className="mr-1 text-faint">Рейтинг:</span>
-              {([[0, "любой"], [4, "4.0+"], [4.5, "4.5+"]] as [number, string][]).map(([v, label]) => (
+              {([[0, "все"], [4, "4.0+"], [4.5, "4.5+"]] as [number, string][]).map(([v, label]) => (
                 <button
                   key={v}
                   onClick={() => setMinRating(v)}
