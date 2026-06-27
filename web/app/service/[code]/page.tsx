@@ -45,6 +45,9 @@ export default function ServicePage() {
   const [limit, setLimit] = useState(PAGE);
   const [filter, setFilter] = useState("");
   const [sort, setSort] = useState<SortMode>("relevant");
+  const [priceFrom, setPriceFrom] = useState("");
+  const [priceTo, setPriceTo] = useState("");
+  const [minRating, setMinRating] = useState(0);
   const [history, setHistory] = useState<HistoryResponse | null>(null);
 
   useEffect(() => {
@@ -76,14 +79,23 @@ export default function ServicePage() {
   const offers = useMemo(() => {
     if (!data) return [];
     const f = filter.trim().toLowerCase();
-    if (!f) return data.offers;
-    return data.offers.filter(
-      (o) =>
-        prettyClinic(o.clinic).toLowerCase().includes(f) ||
-        (o.city || "").toLowerCase().includes(f) ||
-        o.raw_name.toLowerCase().includes(f)
-    );
-  }, [data, filter]);
+    const lo = priceFrom ? Number(priceFrom) : null;
+    const hi = priceTo ? Number(priceTo) : null;
+    return data.offers.filter((o) => {
+      if (lo != null && o.price < lo) return false;
+      if (hi != null && o.price > hi) return false;
+      if (minRating > 0 && (o.rating ?? 0) < minRating) return false;
+      if (f) {
+        return (
+          prettyClinic(o.clinic).toLowerCase().includes(f) ||
+          (o.city || "").toLowerCase().includes(f) ||
+          (o.address || "").toLowerCase().includes(f) ||
+          o.raw_name.toLowerCase().includes(f)
+        );
+      }
+      return true;
+    });
+  }, [data, filter, priceFrom, priceTo, minRating]);
 
   const sorted = useMemo(() => {
     if (!data) return offers;
@@ -176,6 +188,19 @@ export default function ServicePage() {
               <SubscribeButton code={data.code} city={city || undefined} />
               <AddToBasketButton code={data.code} name={data.name} />
             </div>
+
+            {data.last_updated && (
+              <div className="mt-4 flex items-center gap-1.5 text-xs text-faint">
+                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M12 7v5l3 2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                Цены актуальны на{" "}
+                {new Date(data.last_updated).toLocaleDateString("ru-RU", {
+                  day: "2-digit", month: "long", year: "numeric",
+                })}
+              </div>
+            )}
           </div>
 
           {/* ИСТОРИЯ ЦЕН */}
@@ -220,6 +245,51 @@ export default function ServicePage() {
               Релевантность учитывает рейтинг 2ГИС и цену: выше - клиники с лучшей оценкой при разумной цене.
             </p>
           )}
+
+          {/* ФИЛЬТРЫ: цена + рейтинг */}
+          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
+            <div className="flex items-center gap-1.5">
+              <span className="text-faint">Цена ₸:</span>
+              <input
+                value={priceFrom}
+                onChange={(e) => setPriceFrom(e.target.value.replace(/\D/g, ""))}
+                inputMode="numeric"
+                placeholder="от"
+                className="h-8 w-16 rounded-lg border border-line2 bg-surface px-2 text-foreground outline-none focus:border-brand"
+              />
+              <span className="text-faint">–</span>
+              <input
+                value={priceTo}
+                onChange={(e) => setPriceTo(e.target.value.replace(/\D/g, ""))}
+                inputMode="numeric"
+                placeholder="до"
+                className="h-8 w-16 rounded-lg border border-line2 bg-surface px-2 text-foreground outline-none focus:border-brand"
+              />
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="mr-1 text-faint">Рейтинг:</span>
+              {([[0, "любой"], [4, "4.0+"], [4.5, "4.5+"]] as [number, string][]).map(([v, label]) => (
+                <button
+                  key={v}
+                  onClick={() => setMinRating(v)}
+                  className={`rounded-lg px-2 py-1 font-medium transition-colors ${
+                    minRating === v ? "bg-brand-tint text-brand-ink" : "text-muted hover:text-foreground"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {(priceFrom || priceTo || minRating > 0) && (
+              <button
+                onClick={() => { setPriceFrom(""); setPriceTo(""); setMinRating(0); }}
+                className="text-faint underline-offset-2 hover:text-foreground hover:underline"
+              >
+                сбросить
+              </button>
+            )}
+            <span className="ml-auto text-faint">{sorted.length} из {data.stats.count}</span>
+          </div>
 
           {/* LIST */}
           <div className="mt-3 overflow-hidden rounded-2xl border border-line bg-surface">

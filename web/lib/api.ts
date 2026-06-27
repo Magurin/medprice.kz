@@ -125,6 +125,7 @@ export interface Compare {
   category: string | null;
   is_curated: boolean;
   city: string | null;
+  last_updated?: string | null;
   stats: CompareStats;
   offers: Offer[];
 }

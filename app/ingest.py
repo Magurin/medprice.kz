@@ -24,6 +24,7 @@ ingest.py — превращает «сырьё» харвестера в нор
 
 Запуск:  python -m app.ingest   (DATABASE_URL -> session pooler :5432)
 """
+import datetime as dt
 import json
 import os
 from collections import defaultdict, Counter
@@ -85,6 +86,7 @@ def _chunks(seq, n):
 
 def run():
     matcher = Matcher()
+    now = dt.datetime.now(dt.timezone.utc)  # отметка актуальности цен (ТЗ §3.3)
 
     # --- существующие id (чтобы UPSERT сохранял их и не рвал FK) ---
     with engine.connect() as conn:
@@ -182,6 +184,7 @@ def run():
             "match_method": m["method"],
             "match_score": m["score"],
             "source_type": "web",
+            "parsed_at": now,
         })
         if o.get("price") is not None:
             priced_count[sid] += 1
