@@ -9,7 +9,6 @@ import PriceHistoryChart from "@/components/PriceHistoryChart";
 import SubscribeButton from "@/components/SubscribeButton";
 import AddToBasketButton from "@/components/AddToBasketButton";
 import Rating from "@/components/Rating";
-import SourceBadge from "@/components/SourceBadge";
 import CityPicker from "@/components/CityPicker";
 
 const PAGE = 25;
@@ -392,12 +391,6 @@ export default function ServicePage() {
                           <Rating rating={o.rating} count={o.reviews_count} url={o.twogis_url} size="xs" />
                         </span>
                       )}
-                      <SourceBadge
-                        sourceType={o.source_type}
-                        sourceUrl={o.source_url}
-                        sourceFile={o.source_file}
-                        parsedAt={o.parsed_at}
-                      />
                     </div>
                     {o.address && (
                       <div className="mt-0.5 truncate text-xs text-muted" title={o.address}>
