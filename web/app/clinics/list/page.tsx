@@ -13,6 +13,7 @@ export default function ClinicsListPage() {
   const [city, setCity] = useState("");
   const [q, setQ] = useState("");
   const [dq, setDq] = useState(""); // q с задержкой -> идёт в запрос
+  const [minRating, setMinRating] = useState(0);
   const [clinics, setClinics] = useState<ClinicRow[]>([]);
   const [total, setTotal] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -30,7 +31,7 @@ export default function ClinicsListPage() {
   useEffect(() => {
     setLoading(true);
     setTotal(null);
-    const p = { city: city || undefined, q: dq || undefined };
+    const p = { city: city || undefined, q: dq || undefined, min_rating: minRating || undefined };
     api
       .clinics({ ...p, limit: LIMIT })
       .then(setClinics)
@@ -40,7 +41,7 @@ export default function ClinicsListPage() {
       .clinicsCount(p)
       .then((r) => setTotal(r.count))
       .catch(() => setTotal(null));
-  }, [city, dq]);
+  }, [city, dq, minRating]);
 
   const capped = clinics.length >= LIMIT;
 
@@ -64,6 +65,21 @@ export default function ClinicsListPage() {
           placeholder="Поиск по названию…"
           className="min-w-[220px] flex-1 rounded-lg border border-line bg-surface px-3 py-2 text-sm text-foreground placeholder:text-faint outline-none transition-colors focus:border-brand"
         />
+      </div>
+
+      <div className="mb-4 flex items-center gap-1 text-sm">
+        <span className="mr-1 text-faint">Рейтинг:</span>
+        {([[0, "любой"], [4, "4.0+"], [4.5, "4.5+"]] as [number, string][]).map(([v, label]) => (
+          <button
+            key={v}
+            onClick={() => setMinRating(v)}
+            className={`rounded-lg px-2.5 py-1 font-medium transition-colors ${
+              minRating === v ? "bg-brand-tint text-brand-ink" : "text-muted hover:text-foreground"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-line bg-surface">

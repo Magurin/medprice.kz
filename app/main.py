@@ -374,6 +374,7 @@ def clinics(
     q: Optional[str] = None,
     source: str = Query("all", pattern="^(all|web|file)$"),
     with_coords: bool = Query(False),  # только клиники с координатами (для карты)
+    min_rating: float = Query(0, ge=0, le=5),
     limit: int = Query(50, le=500),
     db: Session = Depends(get_db),
 ):
@@ -386,6 +387,8 @@ def clinics(
         query = query.filter(Clinic.source_type == source)
     if with_coords:
         query = query.filter(Clinic.lat.isnot(None), Clinic.lng.isnot(None))
+    if min_rating > 0:
+        query = query.filter(Clinic.rating >= min_rating)
     rows = query.limit(limit).all()
     return [
         {"id": cl.id, "name": cl.name, "city": ct.name if ct else None, "address": cl.address,
@@ -404,6 +407,7 @@ def clinics_count(
     q: Optional[str] = None,
     source: str = Query("all", pattern="^(all|web|file)$"),
     with_coords: bool = Query(False),
+    min_rating: float = Query(0, ge=0, le=5),
     db: Session = Depends(get_db),
 ):
     query = db.query(func.count(Clinic.id)).outerjoin(City, City.id == Clinic.city_id)
@@ -415,6 +419,8 @@ def clinics_count(
         query = query.filter(Clinic.source_type == source)
     if with_coords:
         query = query.filter(Clinic.lat.isnot(None), Clinic.lng.isnot(None))
+    if min_rating > 0:
+        query = query.filter(Clinic.rating >= min_rating)
     return {"count": query.scalar() or 0}
 
 

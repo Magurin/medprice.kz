@@ -240,9 +240,9 @@ const qs = (params: Record<string, string | number | undefined>) => {
 export const api = {
   stats: () => get<Stats>("/api/stats"),
   cities: () => get<CityRow[]>("/api/cities"),
-  clinics: (p: { city?: string; q?: string; with_coords?: boolean; limit?: number }) =>
+  clinics: (p: { city?: string; q?: string; with_coords?: boolean; min_rating?: number; limit?: number }) =>
     get<ClinicRow[]>(`/api/clinics${qs({ ...p, with_coords: p.with_coords ? 1 : undefined })}`),
-  clinicsCount: (p: { city?: string; q?: string; with_coords?: boolean }) =>
+  clinicsCount: (p: { city?: string; q?: string; with_coords?: boolean; min_rating?: number }) =>
     get<{ count: number }>(`/api/clinics/count${qs({ ...p, with_coords: p.with_coords ? 1 : undefined })}`),
   clinicCard: (id: number) => get<ClinicCard>(`/api/clinics/${id}`),
   categories: () => get<CategoryRow[]>("/api/categories"),
