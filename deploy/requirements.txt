@@ -1,0 +1,7 @@
+# Runtime для постоянно запущенного сервера (OCI VM), в отличие от Vercel-serverless.
+# Базовый рантайм (fastapi, SQLAlchemy, pydantic, psycopg) берём из корневого файла:
+-r ../requirements.txt
+
+# ASGI-сервер + продакшн-менеджер процессов (на Vercel не нужны — там свой рантайм):
+uvicorn[standard]==0.32.*
+gunicorn==23.*

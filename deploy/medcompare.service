@@ -1,0 +1,35 @@
+# systemd-юнит бэкенда MedPrice KZ (FastAPI через gunicorn+uvicorn).
+# Установка:
+#   sudo cp deploy/medcompare.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now medcompare
+# Логи:  journalctl -u medcompare -f
+[Unit]
+Description=MedPrice KZ FastAPI backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/medcompare
+EnvironmentFile=/etc/medcompare/medcompare.env
+# 2 воркера комфортно живут в 1 ГБ (≈250 МБ суммарно). Слушаем только localhost —
+# наружу торчит Caddy (TLS), который проксирует на 127.0.0.1:8077.
+ExecStart=/opt/medcompare/.venv/bin/gunicorn app.main:app \
+    --worker-class uvicorn.workers.UvicornWorker \
+    --workers 2 \
+    --bind 127.0.0.1:8077 \
+    --timeout 60 \
+    --graceful-timeout 30 \
+    --access-logfile - \
+    --error-logfile -
+Restart=always
+RestartSec=3
+# базовое усиление
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

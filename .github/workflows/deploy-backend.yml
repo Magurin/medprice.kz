@@ -1,0 +1,66 @@
+name: deploy-backend
+
+# CI/CD бэкенда на свой сервер (OCI VM): push в main -> rsync кода по SSH + рестарт сервиса.
+# Бэкенд живёт на VM (не на Vercel), фронт деплоится отдельно Git-интеграцией Vercel.
+# Требуются секреты репозитория:
+#   DEPLOY_SSH_KEY      — приватный ed25519-ключ (публичный лежит в authorized_keys на сервере)
+#   DEPLOY_HOST         — 51.170.93.74
+#   DEPLOY_USER         — ubuntu
+#   DEPLOY_KNOWN_HOSTS  — вывод ssh-keyscan хоста (проверка подлинности сервера)
+on:
+  push:
+    branches: [main]
+    paths:                      # катим только при изменениях бэкенда
+      - "app/**"
+      - "requirements.txt"
+      - "requirements-dev.txt"
+      - "deploy/**"
+      - ".github/workflows/deploy-backend.yml"
+  workflow_dispatch:            # ручной запуск кнопкой
+
+concurrency:                    # не наезжать деплоями друг на друга
+  group: deploy-backend
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup SSH
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+
+      - name: Rsync backend to server
+        env:
+          H: ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}
+        run: |
+          # app/ и deploy/ зеркалим (--delete убирает удалённые файлы), requirements просто копируем.
+          rsync -az --delete --exclude='__pycache__' \
+            -e "ssh -i ~/.ssh/id_ed25519" app/ "$H":/opt/medcompare/app/
+          rsync -az --delete \
+            -e "ssh -i ~/.ssh/id_ed25519" deploy/ "$H":/opt/medcompare/deploy/
+          rsync -az \
+            -e "ssh -i ~/.ssh/id_ed25519" requirements.txt requirements-dev.txt "$H":/opt/medcompare/
+
+      - name: Install deps + restart service
+        env:
+          H: ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}
+        run: |
+          ssh -i ~/.ssh/id_ed25519 "$H" '
+            set -e
+            /opt/medcompare/.venv/bin/pip install -q -r /opt/medcompare/deploy/requirements.txt
+            sudo systemctl restart medcompare
+            sleep 4
+            systemctl is-active medcompare
+          '
+
+      - name: Health check
+        run: |
+          code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 https://51.170.93.74.sslip.io/)
+          echo "API status: $code"
+          test "$code" = "200"

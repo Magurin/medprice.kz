@@ -1,0 +1,7 @@
+# Caddy: автоматический HTTPS (Let's Encrypt) + reverse-proxy на бэкенд.
+# __DOMAIN__ заменит bootstrap.sh из аргумента (или поправьте вручную).
+# Caddy сам получит и продлит сертификат — отдельных действий не нужно.
+__DOMAIN__ {
+    encode gzip
+    reverse_proxy 127.0.0.1:8077
+}
