@@ -6,14 +6,26 @@ harvest.py — массовый сбор прайс-листов клиник Р
     .PersonalOffers__item
         .PersonalOffers__title   -> название услуги (как у клиники, «сырое»)
         .PersonalOffers__price   -> цена («1 790 тенге», «от 2 000 тенге», «уточняйте»)
-Город/адрес/имя клиники берём из элемента адреса и <title>.
+
+Имя/город/адрес/телефон/часы работы клиники берём из встроенного JSON-LD
+(<script type="application/ld+json"> -> LocalBusiness): там всегда лежат чистые
+поля name / address.streetAddress / addressLocality / telephone /
+openingHoursSpecification. Это снимает мусор вида «invitro-6», «gemotest-4»
+(раньше имя добывалось из <title>, а для лабораторий шаблон не совпадал и
+происходил откат к слагу хоста). Если JSON-LD нет — мягкий откат к <title>/<h1>
+и DOM-элементам адреса/времени, но НИКОГДА к нумерованному слагу хоста.
 
 Многопоточно (ThreadPoolExecutor), докачиваемо (пропускает хосты из _done.txt),
 устойчиво к ошибкам отдельных клиник.
 
 Выход (JSONL, по строке на запись):
-    raw/clinics.jsonl  — {host, name, city, address, source_url, n_offers}
+    raw/clinics.jsonl  — {host, name, brand, street, city, address, phone,
+                          working_hours, source_url, n_offers}
     raw/offers.jsonl   — {host, raw_name, category, price, currency, is_from, on_request}
+
+Имя бренда («Гемотест», «INVITRO (ИНВИТРО)») у сетей одинаково на всех филиалах —
+различение филиалов по улице делает потребитель (app/ingest.py): если бренд
+встречается в ≥2 клиниках, к имени добавляется улица из street.
 
 Запуск:
     python harvester/harvest.py --limit 300 --workers 24
@@ -80,6 +92,7 @@ def detect_city(soup: BeautifulSoup, title: str) -> str | None:
     el = soup.select_one("[class*=address], [class*=Address]")
     if el:
         head = el.get_text(" ", strip=True).split(",")[0].strip()
+        head = re.sub(r"^г\.\s*", "", head)  # "г. Каскелен" -> "Каскелен"
         for c in CITIES:
             if head.lower().startswith(c.lower()):
                 return CITY_CANON.get(c, c)
@@ -90,19 +103,135 @@ def detect_city(soup: BeautifulSoup, title: str) -> str | None:
     return None
 
 
-def clinic_name(title: str, host: str) -> str:
-    # "Цены - <NAME> - стоимость, прайс-лист ..."
-    m = re.search(r"Цены\s*[-–—]\s*(.+?)\s*[-–—]\s*(?:стоимость|прайс)", title, re.IGNORECASE)
-    if m:
-        return m.group(1).strip()
-    if " - " in title:
-        return title.split(" - ")[0].replace("Цены", "").strip(" -–—")
-    return host.replace(".103.kz", "")
+# --- имя клиники из <title>/<h1> (мягкий откат, когда нет JSON-LD) ---
+_CENY_HEAD = re.compile(r"^\s*цены\s*[-–—|:]\s*", re.IGNORECASE)
+_PRICE_TAIL = re.compile(
+    r"\s*[-–—|]\s*(?:стоимость|прайс[\s-]?лист|прейскурант|цены|услуги|анализы)\b.*$",
+    re.IGNORECASE,
+)
+
+
+def _deslug(host: str) -> str:
+    """'gorodskaja-poliklinika-5' -> 'Gorodskaja Poliklinika' (БЕЗ хвостового номера филиала)."""
+    base = host.replace(".103.kz", "")
+    base = re.sub(r"-\d+$", "", base)            # отрезаем '-6', '-12' и т.п.
+    base = re.sub(r"-(kz|kazahstan|kz\d+)$", "", base, flags=re.IGNORECASE) or base
+    words = [w for w in base.split("-") if w]
+    return " ".join(w.capitalize() for w in words) or host.replace(".103.kz", "")
+
+
+def clinic_name(title: str, h1: str, host: str) -> str:
+    """Чистое имя из <title>/<h1>. Никогда не возвращает нумерованный слаг хоста."""
+    for src in (title, h1):
+        if not src:
+            continue
+        s = _CENY_HEAD.sub("", src)
+        s = _PRICE_TAIL.sub("", s).strip(" -–—|·")
+        if len(s) >= 2 and not re.fullmatch(r"[-–—\s·]*", s):
+            return s
+    return _deslug(host)
+
+
+# --- JSON-LD (schema.org) ---
+def _iter_ld(soup: BeautifulSoup):
+    for s in soup.find_all("script", attrs={"type": "application/ld+json"}):
+        raw = s.string or s.get_text() or ""
+        if not raw.strip():
+            continue
+        try:
+            data = json.loads(raw)
+        except Exception:
+            continue
+        stack = [data]
+        while stack:
+            x = stack.pop()
+            if isinstance(x, list):
+                stack.extend(x)
+            elif isinstance(x, dict):
+                g = x.get("@graph")
+                if isinstance(g, list):
+                    stack.extend(g)
+                yield x
+
+
+def _localbusiness(soup: BeautifulSoup) -> dict | None:
+    """LocalBusiness/Medical* блок с именем и адресом — основной источник полей клиники."""
+    for x in _iter_ld(soup):
+        t = x.get("@type")
+        types = t if isinstance(t, list) else [t]
+        ok = any(
+            str(tt).endswith("LocalBusiness") or str(tt).startswith("Medical")
+            or tt in ("Hospital", "Pharmacy", "Dentist", "Physician")
+            for tt in types
+        )
+        if ok and x.get("name") and x.get("address"):
+            return x
+    return None
+
+
+_DOW = {
+    "monday": "Пн", "tuesday": "Вт", "wednesday": "Ср", "thursday": "Чт",
+    "friday": "Пт", "saturday": "Сб", "sunday": "Вс",
+}
+_DOW_ORDER = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+
+
+def _fmt_hours(spec) -> str | None:
+    """openingHoursSpecification -> 'Пн–Пт 07:00–12:00, Сб 08:00–11:00' (соседние дни схлопываем)."""
+    if not spec:
+        return None
+    if isinstance(spec, dict):
+        spec = [spec]
+    byday: dict[str, tuple[str, str]] = {}
+    for s in spec:
+        if not isinstance(s, dict):
+            continue
+        dw = s.get("dayOfWeek")
+        days = dw if isinstance(dw, list) else [dw]
+        o = (s.get("opens") or "").strip()[:5]
+        c = (s.get("closes") or "").strip()[:5]
+        if not (o and c):
+            continue
+        for d in days:
+            ab = _DOW.get(str(d).rstrip("/").split("/")[-1].lower())
+            if ab:
+                byday[ab] = (o, c)
+    if not byday:
+        return None
+    groups: list[tuple[str, str, tuple[str, str]]] = []
+    for d in _DOW_ORDER:
+        if d not in byday:
+            continue
+        hrs = byday[d]
+        if groups and groups[-1][2] == hrs and \
+                _DOW_ORDER.index(d) == _DOW_ORDER.index(groups[-1][1]) + 1:
+            groups[-1] = (groups[-1][0], d, hrs)
+        else:
+            groups.append((d, d, hrs))
+    if len(groups) == 1 and groups[0][0] == "Пн" and groups[0][1] == "Вс":
+        o, c = groups[0][2]
+        return f"Ежедневно {o}–{c}"
+    segs = []
+    for a, b, (o, c) in groups:
+        label = a if a == b else f"{a}–{b}"
+        segs.append(f"{label} {o}–{c}")
+    return ", ".join(segs)
+
+
+def _first_phone(tel) -> str | None:
+    if not tel:
+        return None
+    first = str(tel).split(",")[0]
+    first = re.sub(r"\s+", " ", first).strip()
+    return first or None
 
 
 def parse_clinic(host: str, html: str):
     soup = BeautifulSoup(html, "lxml")
     title = (soup.title.get_text(strip=True) if soup.title else "") or ""
+    h1_el = soup.select_one("h1")
+    h1 = h1_el.get_text(" ", strip=True) if h1_el else ""
+
     items = soup.select(".PersonalOffers__item")
     offers = []
     for it in items:
@@ -125,20 +254,51 @@ def parse_clinic(host: str, html: str):
             "is_from": is_from,
             "on_request": on_request,
         })
+
+    # --- поля клиники: сперва JSON-LD, затем мягкий откат к DOM/<title> ---
+    lb = _localbusiness(soup)
+    addr_el = soup.select_one("[class*=address], [class*=Address]")
+    addr_dom = addr_el.get("title") or addr_el.get_text(" ", strip=True) if addr_el else None
+
+    brand = street = city = phone = working_hours = None
+    if lb:
+        brand = (lb.get("name") or "").strip() or None
+        ad = lb.get("address") or {}
+        if isinstance(ad, dict):
+            street = re.sub(r"\s+", " ", (ad.get("streetAddress") or "").strip()) or None
+            city = (ad.get("addressLocality") or "").strip() or None
+        phone = _first_phone(lb.get("telephone"))
+        working_hours = _fmt_hours(lb.get("openingHoursSpecification"))
+
+    if not brand:
+        brand = clinic_name(title, h1, host)
+    if not city:
+        city = detect_city(soup, title)
+    city = CITY_CANON.get(city, city) if city else None
+    if not street and addr_dom:
+        # из полного адреса DOM выкидываем ведущий город: "Алматы, ул. X, 1" -> "ул. X, 1"
+        parts = [s.strip() for s in addr_dom.split(",")]
+        if parts and city and parts[0].lower().lstrip("г. ").startswith(city.lower()):
+            street = ", ".join(parts[1:]).strip() or None
+        else:
+            street = addr_dom
+
+    # человекочитаемый адрес: "Город, улица" (как на 103.kz)
+    address = ", ".join([p for p in (city, street) if p]) or addr_dom
+
     clinic = {
         "host": host,
-        "name": clinic_name(title, host),
-        "city": detect_city(soup, title),
-        "address": (soup.select_one("[class*=address], [class*=Address]") or _Empty()).get_text(" ", strip=True) if soup.select_one("[class*=address], [class*=Address]") else None,
+        "name": brand,          # бренд; различение филиалов по street делает ingest
+        "brand": brand,
+        "street": street,
+        "city": city,
+        "address": address,
+        "phone": phone,
+        "working_hours": working_hours,
         "source_url": f"https://{host}/pricing/",
         "n_offers": len(offers),
     }
     return clinic, offers
-
-
-class _Empty:
-    def get_text(self, *a, **k):
-        return None
 
 
 _write_lock = threading.Lock()
