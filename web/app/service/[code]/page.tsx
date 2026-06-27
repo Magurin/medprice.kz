@@ -166,7 +166,7 @@ export default function ServicePage() {
 
             <div className="mt-5 rounded-xl bg-deal-tint/60 px-4 py-3 text-sm text-foreground">
               <span>
-                <b>{data.stats.count}</b> клиник предлагают услугу. Между самой дешёвой и дорогой —{" "}
+                <b>{data.stats.count}</b> клиник предлагают услугу. Между самой дешёвой и дорогой -{" "}
                 <b className="tabular-nums">{tenge(data.stats.savings)}</b> разницы: можно сэкономить до{" "}
                 <b className="text-deal">{data.stats.savings_pct}%</b>.
               </span>
@@ -217,7 +217,7 @@ export default function ServicePage() {
           </div>
           {sort === "relevant" && (
             <p className="mt-2 text-xs text-faint">
-              Релевантность учитывает рейтинг 2ГИС и цену: выше — клиники с лучшей оценкой при разумной цене.
+              Релевантность учитывает рейтинг 2ГИС и цену: выше - клиники с лучшей оценкой при разумной цене.
             </p>
           )}
 
@@ -305,8 +305,8 @@ export default function ServicePage() {
           )}
 
           <p className="mt-4 text-xs leading-relaxed text-faint">
-            Серым под клиникой — оригинальное название услуги в её прайсе (до нормализации).
-            «от» — цена указана как минимальная. Цены справочные, уточняйте в клинике.
+            Серым под клиникой - оригинальное название услуги в её прайсе (до нормализации).
+            «от» - цена указана как минимальная. Цены справочные, уточняйте в клинике.
           </p>
         </>
       )}

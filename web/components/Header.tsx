@@ -49,7 +49,7 @@ export default function Header() {
             </Link>
           ))}
 
-          {/* раздел для сотрудников — виден только staff (роль из public.staff) */}
+          {/* раздел для сотрудников - виден только staff (роль из public.staff) */}
           {isStaff && (
             <Link
               href="/admin"

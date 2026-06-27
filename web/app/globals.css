@@ -15,12 +15,12 @@
   --line: #e8edf2;
   --line-2: #d8e1e9;
 
-  /* brand — teal, medical, calm */
+  /* brand - teal, medical, calm */
   --brand: #0d9488;
   --brand-ink: #0b7268;
   --brand-tint: #e3f4f1;
 
-  /* semantic — deals & market */
+  /* semantic - deals & market */
   --deal: #0a9d63;
   --deal-tint: #e6f6ef;
   --warn: #dd5a42;
@@ -62,7 +62,7 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-/* tabular figures — prices line up in columns */
+/* tabular figures - prices line up in columns */
 .tnum {
   font-variant-numeric: tabular-nums;
 }

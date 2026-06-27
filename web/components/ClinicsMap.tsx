@@ -5,7 +5,7 @@ import type { Map as LeafletMap, LayerGroup } from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { ClinicRow, twoGisRoute } from "@/lib/api";
 
-// Центр Казахстана — стартовый вид, пока не подгрузились клиники.
+// Центр Казахстана - стартовый вид, пока не подгрузились клиники.
 const KZ_CENTER: [number, number] = [48.0, 67.0];
 
 type Props = {

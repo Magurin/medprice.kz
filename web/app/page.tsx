@@ -27,6 +27,86 @@ const POPULAR_QUERIES = [
 
 const nf = (n: number) => n.toLocaleString("ru-RU");
 
+const ic = "h-5 w-5";
+const icFeat = "h-5 w-5";
+
+const STEPS = [
+  {
+    n: "1",
+    t: "Найдите услугу",
+    d: "Введите анализ, приём врача или диагностику. Поиск понимает синонимы и сокращения - «ОАК» и «общий анализ крови» приведут к одной услуге.",
+    icon: (
+      <svg className={ic} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+        <circle cx="11" cy="11" r="7" />
+        <path d="m21 21-4.3-4.3" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
+    n: "2",
+    t: "Сравните клиники",
+    d: "Цены десятков клиник в одном каталоге - от самой дешёвой к дорогой. Видно минимум, медиану и разброс, чтобы не переплатить.",
+    icon: (
+      <svg className={ic} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+        <path d="M4 19V9M10 19V5M16 19v-7M22 19H2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+  {
+    n: "3",
+    t: "Выберите выгодно",
+    d: "Переходите на сайт клиники по прямой ссылке или соберите корзину из нескольких услуг и сравните итоговую стоимость.",
+    icon: (
+      <svg className={ic} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+        <path d="M20 6 9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+] as const;
+
+const FEATURES = [
+  {
+    t: "Умный поиск названий",
+    d: "Понимаем синонимы, сокращения и разные формулировки одной и той же услуги.",
+    icon: (
+      <svg className={icFeat} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+        <path d="M12 3v3M12 18v3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M3 12h3M18 12h3M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1" strokeLinecap="round" />
+        <circle cx="12" cy="12" r="3.2" />
+      </svg>
+    ),
+  },
+  {
+    t: "Только публичные цены",
+    d: "Собираем из открытых прайс-листов клиник - без рекламы, наценок и скрытых условий.",
+    icon: (
+      <svg className={icFeat} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+        <path d="M12 3 4 6v6c0 4.4 3.2 7.6 8 9 4.8-1.4 8-4.6 8-9V6l-8-3Z" strokeLinejoin="round" />
+        <path d="m9 12 2 2 4-4" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+  {
+    t: "Прозрачное сравнение",
+    d: "Минимум, медиана и максимум по каждой услуге - сразу видно справедливую цену.",
+    icon: (
+      <svg className={icFeat} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+        <path d="M3 3v18h18" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M7 14v3M12 9v8M17 5v12" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
+    t: "Данные всего Казахстана",
+    d: "Клиники десятков городов, цены обновляются регулярно по публичным источникам.",
+    icon: (
+      <svg className={icFeat} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+        <circle cx="12" cy="12" r="9" />
+        <path d="M3 12h18M12 3c2.5 2.5 3.8 5.7 3.8 9s-1.3 6.5-3.8 9c-2.5-2.5-3.8-5.7-3.8-9S9.5 5.5 12 3Z" />
+      </svg>
+    ),
+  },
+] as const;
+
 function TrustStrip({ items }: { items: { v: string; l: string }[] }) {
   return (
     <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-sm text-muted">
@@ -191,20 +271,92 @@ export default async function Home() {
         )}
 
         {/* HOW IT WORKS */}
-        <section className="grid gap-3 sm:grid-cols-3">
-          {[
-            { n: "1", t: "Найдите услугу", d: "Введите анализ, приём или диагностику — мы поймём разные названия одной услуги." },
-            { n: "2", t: "Сравните клиники", d: "Цены десятков клиник в одной таблице — от самой дешёвой к дорогой." },
-            { n: "3", t: "Выберите выгодно", d: "Видите разброс и медиану — и переходите на сайт клиники по ссылке." },
-          ].map((s) => (
-            <div key={s.n} className="rounded-2xl border border-line bg-surface p-5">
-              <span className="grid h-8 w-8 place-items-center rounded-full bg-brand-tint text-sm font-bold text-brand-ink">
-                {s.n}
-              </span>
-              <h3 className="mt-3 font-semibold text-foreground">{s.t}</h3>
-              <p className="mt-1 text-sm leading-relaxed text-muted">{s.d}</p>
-            </div>
-          ))}
+        <section>
+          <div className="mb-7 text-center">
+            <h2 className="text-2xl font-semibold tracking-tight text-foreground">Как это работает</h2>
+            <p className="mx-auto mt-2 max-w-xl text-pretty text-muted">
+              Три шага от названия услуги до самой выгодной клиники - без звонков и обхода прайс-листов.
+            </p>
+          </div>
+
+          <div className="relative grid gap-5 sm:grid-cols-3 sm:gap-6">
+            {STEPS.map((s, i) => (
+              <div
+                key={s.n}
+                className="group relative overflow-hidden rounded-2xl border border-line bg-surface p-6 transition-all hover:-translate-y-0.5 hover:border-brand/40 hover:shadow-[0_18px_36px_-22px_rgba(13,148,136,0.45)]"
+              >
+                <span
+                  aria-hidden
+                  className="pointer-events-none absolute -right-2 -top-4 select-none text-[88px] font-bold leading-none text-brand-tint/70"
+                >
+                  {s.n}
+                </span>
+
+                <span className="relative grid h-11 w-11 place-items-center rounded-xl bg-brand-tint text-brand-ink ring-1 ring-brand/15">
+                  {s.icon}
+                </span>
+
+                <h3 className="relative mt-4 text-lg font-semibold text-foreground">{s.t}</h3>
+                <p className="relative mt-1.5 text-sm leading-relaxed text-muted">{s.d}</p>
+
+                {i < STEPS.length - 1 && (
+                  <span className="absolute top-1/2 -right-3 z-10 hidden h-7 w-7 -translate-y-1/2 place-items-center rounded-full border border-line bg-surface text-brand shadow-sm sm:grid">
+                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                      <path d="m9 6 6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* WHY US */}
+        <section>
+          <div className="mb-7 text-center">
+            <h2 className="text-2xl font-semibold tracking-tight text-foreground">Почему MedPrice.kz</h2>
+            <p className="mx-auto mt-2 max-w-xl text-pretty text-muted">
+              Мы собираем цены за вас, приводим их к одному виду и показываем честно - без рекламы и наценок.
+            </p>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {FEATURES.map((f) => (
+              <div key={f.t} className="rounded-2xl border border-line bg-surface p-5">
+                <span className="grid h-10 w-10 place-items-center rounded-lg bg-surface2 text-brand ring-1 ring-line">
+                  {f.icon}
+                </span>
+                <h3 className="mt-3.5 font-semibold text-foreground">{f.t}</h3>
+                <p className="mt-1 text-sm leading-relaxed text-muted">{f.d}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* CTA */}
+        <section className="relative overflow-hidden rounded-3xl border border-line bg-surface px-6 py-10 text-center sm:py-12">
+          <div
+            className="pointer-events-none absolute inset-0 -z-10"
+            style={{
+              background:
+                "radial-gradient(70% 120% at 50% 0%, var(--brand-tint) 0%, transparent 65%)",
+            }}
+          />
+          <h2 className="text-balance text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+            Узнайте, сколько стоит ваша услуга
+          </h2>
+          <p className="mx-auto mt-2 max-w-lg text-pretty text-muted">
+            Бесплатно, без регистрации. Введите название - и сравните цены клиник за пару секунд.
+          </p>
+          <Link
+            href="/search"
+            className="mt-6 inline-flex items-center gap-2 rounded-full bg-brand px-6 py-3 font-medium text-white shadow-sm transition-colors hover:bg-brand-ink"
+          >
+            Сравнить цены
+            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="m9 6 6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </Link>
         </section>
       </div>
     </div>

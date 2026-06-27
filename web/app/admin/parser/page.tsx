@@ -13,7 +13,7 @@ const STATUS_STYLE: Record<string, string> = {
 };
 
 function fmt(ts: string | null) {
-  if (!ts) return "—";
+  if (!ts) return "-";
   const d = new Date(ts);
   return d.toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
@@ -44,7 +44,7 @@ export default function ParserPage() {
     load();
   }, [load]);
 
-  // Пока есть незавершённые прогоны — мягкий поллинг статуса.
+  // Пока есть незавершённые прогоны - мягкий поллинг статуса.
   useEffect(() => {
     if (!runs.some((r) => r.status === "queued" || r.status === "running")) return;
     const t = setInterval(load, 5000);
@@ -91,7 +91,7 @@ export default function ParserPage() {
       <section className="rounded-2xl border border-line bg-surface p-5">
         <h2 className="text-base font-semibold text-foreground">Запустить сбор данных</h2>
         <p className="mt-1 text-sm text-muted">
-          Парсинг выполняется на раннере (GitHub Actions) — тем же воркером, что и по расписанию.
+          Парсинг выполняется на раннере (GitHub Actions) - тем же воркером, что и по расписанию.
           Здесь ставим прогон в очередь вручную.
         </p>
         <div className="mt-4 flex flex-wrap items-end gap-3">

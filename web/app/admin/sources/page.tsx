@@ -82,7 +82,7 @@ export default function SourcesPage() {
         <h2 className="text-base font-semibold text-foreground">Источники парсинга</h2>
         <p className="mt-1 text-sm text-muted">
           Сайты, с которых собираются прайсы. Выключенные источники пропускаются при запуске.
-          «103.kz» — авто-список всех клиник портала; отдельные сайты можно добавить вручную.
+          «103.kz» - авто-список всех клиник портала; отдельные сайты можно добавить вручную.
         </p>
 
         <form onSubmit={add} className="mt-4 flex flex-wrap items-end gap-2">
@@ -112,7 +112,7 @@ export default function SourcesPage() {
           </button>
         </form>
         <p className="mt-2 text-xs text-faint">
-          Сейчас извлечение заточено под шаблон 103.kz — хосты вида <code>name.103.kz</code> парсятся
+          Сейчас извлечение заточено под шаблон 103.kz - хосты вида <code>name.103.kz</code> парсятся
           корректно. Сайты с другой структурой потребуют отдельного парсера (ошибки видны в журнале прогонов).
         </p>
         {msg && (

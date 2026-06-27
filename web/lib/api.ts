@@ -164,12 +164,12 @@ export interface SubscriptionRow {
 }
 
 // Прайсы в БД обновляются раз в сутки (cron 03:00 UTC, см. .github/workflows).
-// Поэтому каталожные данные кэшируем на сутки и метим тегом "catalog" —
+// Поэтому каталожные данные кэшируем на сутки и метим тегом "catalog" -
 // фоновое обновление чистит кэш точечно через /api/revalidate.
 const CATALOG_TTL = 60 * 60 * 24; // 24 часа
 const CATALOG_TAG = "catalog";
 
-// Каталожные (одинаковые для всех) GET-запросы — кэшируем; пользовательские — нет.
+// Каталожные (одинаковые для всех) GET-запросы - кэшируем; пользовательские - нет.
 async function get<T>(path: string, opts?: { cache?: boolean }): Promise<T> {
   const init: RequestInit =
     opts?.cache === false
@@ -227,7 +227,7 @@ export const api = {
   subscriptions: (email: string) =>
     get<{ email: string; subscriptions: SubscriptionRow[] }>(
       `/api/subscriptions${qs({ email })}`,
-      { cache: false } // персональные данные — не кэшируем
+      { cache: false } // персональные данные - не кэшируем
     ),
   unsubscribe: (id: number) =>
     send<{ status: string; id: number }>("DELETE", `/api/subscriptions/${id}`),

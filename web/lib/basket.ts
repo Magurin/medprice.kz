@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 
 // Корзина услуг для сравнения по клиникам. Хранится в localStorage,
-// синхронизация между вкладками/компонентами — через события.
+// синхронизация между вкладками/компонентами - через события.
 const KEY = "medprice_basket";
 const EVENT = "medprice_basket_change";
 

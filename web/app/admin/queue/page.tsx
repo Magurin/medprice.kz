@@ -5,7 +5,7 @@ import { useAuth } from "@/lib/auth";
 import { api, adminApi, UnmatchedGroup, ServiceRow, tenge } from "@/lib/api";
 
 // Очередь ручной разметки (ТЗ §3.2): строки прайсов, которые матчер не привязал.
-// Модератор находит каноническую услугу и привязывает — цена попадает в сравнение.
+// Модератор находит каноническую услугу и привязывает - цена попадает в сравнение.
 function priceLabel(g: UnmatchedGroup) {
   if (g.min_price == null) return "цена не распознана";
   if (g.max_price && g.max_price !== g.min_price) return `${tenge(g.min_price)} – ${tenge(g.max_price)}`;
@@ -111,7 +111,7 @@ function AssignPanel({
         </ul>
       )}
       {q.trim().length >= 2 && results.length === 0 && (
-        <p className="mt-2 text-xs text-faint">Ничего не нашлось — уточни запрос.</p>
+        <p className="mt-2 text-xs text-faint">Ничего не нашлось - уточни запрос.</p>
       )}
     </div>
   );
@@ -163,7 +163,7 @@ export default function QueuePage() {
         <h2 className="text-base font-semibold text-foreground">Очередь ручной разметки</h2>
         <p className="mt-1 text-sm text-muted">
           Строки прайсов, которые автоматический матчер не привязал к справочнику. Найди для строки
-          каноническую услугу — её цена сразу попадёт в сравнение. Решение запоминается.
+          каноническую услугу - её цена сразу попадёт в сравнение. Решение запоминается.
         </p>
         <form
           onSubmit={(e) => {

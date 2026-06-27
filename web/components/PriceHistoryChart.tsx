@@ -92,7 +92,7 @@ export default function PriceHistoryChart({ data }: { data: HistoryResponse }) {
         })}
       </svg>
 
-      {/* легенда — клик скрывает/показывает линию */}
+      {/* легенда - клик скрывает/показывает линию */}
       <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1.5">
         {data.series.map((s, i) => {
           const color = COLORS[i % COLORS.length];

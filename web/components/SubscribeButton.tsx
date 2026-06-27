@@ -33,7 +33,7 @@ export default function SubscribeButton({
       setMsg(
         r.status === "exists"
           ? "Вы уже подписаны на эту услугу."
-          : `Готово! Текущая цена${cur != null ? ` — ${tenge(cur)}` : ""}. Уведомим на ${email} при изменении.`
+          : `Готово! Текущая цена${cur != null ? ` - ${tenge(cur)}` : ""}. Уведомим на ${email} при изменении.`
       );
     } catch (e) {
       setState("error");
@@ -72,7 +72,7 @@ export default function SubscribeButton({
             {!user ? (
               <>
                 <p className="mt-1 text-sm text-muted">
-                  Войдите в аккаунт, чтобы подписаться — уведомления приходят на вашу почту.
+                  Войдите в аккаунт, чтобы подписаться - уведомления приходят на вашу почту.
                 </p>
                 <div className="mt-4 flex gap-2">
                   <Link

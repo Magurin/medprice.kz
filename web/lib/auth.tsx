@@ -27,7 +27,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [role, setRole] = useState<string | null>(null);
 
   // Роль читаем из public.staff. RLS (staff_self_read) отдаёт строку только владельцу,
-  // поэтому обычный юзер получит null — это и есть «не сотрудник».
+  // поэтому обычный юзер получит null - это и есть «не сотрудник».
   async function loadRole(s: Session | null) {
     const sb = getSupabase();
     if (!sb || !s?.user) {

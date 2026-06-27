@@ -30,7 +30,7 @@ export default function RegisterPage() {
     try {
       await signUpEmail(username.trim(), email.trim(), pw);
       setState("done");
-      setMsg("Аккаунт создан. Если включено подтверждение почты — проверьте письмо, иначе можно войти.");
+      setMsg("Аккаунт создан. Если включено подтверждение почты - проверьте письмо, иначе можно войти.");
       setTimeout(() => router.push("/login"), 1800);
     } catch (err) {
       fail(err instanceof Error ? err.message : String(err));

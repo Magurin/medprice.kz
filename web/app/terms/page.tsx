@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import LegalDoc, { LegalSection } from "@/components/LegalDoc";
 
 export const metadata: Metadata = {
-  title: "Пользовательское соглашение — MedPrice.kz",
+  title: "Пользовательское соглашение - MedPrice.kz",
   description: "Условия использования сервиса MedPrice.kz для сравнения цен на медуслуги.",
 };
 

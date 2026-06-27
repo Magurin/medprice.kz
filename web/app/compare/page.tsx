@@ -98,7 +98,7 @@ export default function ComparePage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">Сравнение клиник</h1>
           <p className="mt-1 text-sm text-muted">
-            Соберите корзину услуг — покажем цены по клиникам и самую выгодную.
+            Соберите корзину услуг - покажем цены по клиникам и самую выгодную.
           </p>
         </div>
         {basket.length > 0 && (
@@ -189,7 +189,7 @@ export default function ComparePage() {
                           {p != null ? (
                             tenge(p)
                           ) : (
-                            <span className="text-faint" title="Нет в этой клинике">—</span>
+                            <span className="text-faint" title="Нет в этой клинике">-</span>
                           )}
                         </td>
                       );
@@ -230,8 +230,8 @@ export default function ComparePage() {
 
       {data && data.clinics.length > 0 && (
         <p className="mt-4 text-xs leading-relaxed text-faint">
-          «Итого» — сумма минимальных цен по клинике для услуг корзины. Клиники с полным покрытием
-          показаны выше; «—» означает, что услуги нет в прайсе клиники. Цены справочные.
+          «Итого» - сумма минимальных цен по клинике для услуг корзины. Клиники с полным покрытием
+          показаны выше; «-» означает, что услуги нет в прайсе клиники. Цены справочные.
         </p>
       )}
     </div>

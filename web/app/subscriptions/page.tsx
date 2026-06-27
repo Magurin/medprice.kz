@@ -81,7 +81,7 @@ export default function SubscriptionsPage() {
                 </div>
                 <div className="text-right">
                   <div className="text-sm font-semibold tabular-nums text-foreground">
-                    {s.current_price != null ? tenge(s.current_price) : "—"}
+                    {s.current_price != null ? tenge(s.current_price) : "-"}
                   </div>
                   {s.delta != null && s.delta !== 0 && (
                     <div className={`text-xs tabular-nums ${down ? "text-deal" : "text-warn"}`}>

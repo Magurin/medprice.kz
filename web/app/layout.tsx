@@ -7,7 +7,7 @@ import { AuthProvider } from "@/lib/auth";
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin", "cyrillic"] });
 
 export const metadata: Metadata = {
-  title: "MedPrice.kz — сравнение цен на медуслуги в Казахстане",
+  title: "MedPrice.kz - сравнение цен на медуслуги в Казахстане",
   description:
     "Агрегатор цен на анализы, МРТ, КТ, УЗИ и приёмы врачей по клиникам Казахстана. Сравните стоимость одной услуги в десятках клиник и найдите дешевле.",
 };

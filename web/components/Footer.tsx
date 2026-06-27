@@ -13,7 +13,7 @@ export default function Footer() {
               MedPrice.kz
             </Link>
             <p className="mt-3 text-sm leading-relaxed text-faint">
-              Цены на медуслуги клиник Казахстана — в одном месте.
+              Цены на медуслуги клиник Казахстана - в одном месте.
             </p>
           </div>
 

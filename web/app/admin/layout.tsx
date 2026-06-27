@@ -7,7 +7,7 @@ import { usePathname } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 
 // Клиентский гейт: вход в админку только для staff.
-// Это «забор» UI — реальную защиту данных делает бэкенд (verify_staff на ручках),
+// Это «забор» UI - реальную защиту данных делает бэкенд (verify_staff на ручках),
 // потому что FastAPI ходит в БД мимо RLS. Здесь просто не пускаем и прячем.
 const ADMIN_LINKS = [
   { href: "/admin", label: "Обзор" },

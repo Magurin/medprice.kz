@@ -4,7 +4,7 @@ import { usePathname } from "next/navigation";
 import Footer from "@/components/Footer";
 import Header from "@/components/Header";
 
-// На auth-маршрутах прячем общий хедер/футер — там свой полноэкранный layout.
+// На auth-маршрутах прячем общий хедер/футер - там свой полноэкранный layout.
 const AUTH_ROUTES = ["/login", "/register"];
 
 export default function Chrome({ children }: { children: React.ReactNode }) {
