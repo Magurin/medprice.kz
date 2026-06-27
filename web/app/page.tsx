@@ -282,7 +282,7 @@ export default async function Home() {
           </div>
 
           <div className="relative grid gap-5 sm:grid-cols-3 sm:gap-6">
-            {STEPS.map((s, i) => (
+            {STEPS.map((s) => (
               <div
                 key={s.n}
                 className="group relative overflow-hidden rounded-2xl border border-line bg-surface p-6 transition-all hover:-translate-y-0.5 hover:border-brand/40 hover:shadow-[0_18px_36px_-22px_rgba(13,148,136,0.45)]"
@@ -300,14 +300,6 @@ export default async function Home() {
 
                 <h3 className="relative mt-4 text-lg font-semibold text-foreground">{s.t}</h3>
                 <p className="relative mt-1.5 text-sm leading-relaxed text-muted">{s.d}</p>
-
-                {i < STEPS.length - 1 && (
-                  <span className="absolute top-1/2 -right-3 z-10 hidden h-7 w-7 -translate-y-1/2 place-items-center rounded-full border border-line bg-surface text-brand shadow-sm sm:grid">
-                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
-                      <path d="m9 6 6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  </span>
-                )}
               </div>
             ))}
           </div>
