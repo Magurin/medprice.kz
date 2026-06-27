@@ -395,6 +395,7 @@ def unmatched(
 import json as _json
 import os as _os
 import urllib.request as _urlreq
+import urllib.error as _urlerr
 
 from .ops_models import ParseRun, ParseError, RawPriceItem, LearnedMatch
 
@@ -468,15 +469,25 @@ def _dispatch_workflow(body: ParseRunBody) -> None:
         "hosts": body.hosts or "",
         "paths": body.paths or "",
     }}
-    req = _urlreq.Request(
-        f"https://api.github.com/repos/{repo}/actions/workflows/{workflow}/dispatches",
-        data=_json.dumps(payload).encode(),
-        headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
-                 "User-Agent": "medprice-admin"},
-        method="POST",
-    )
+    data = _json.dumps(payload).encode()
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
+               "User-Agent": "medprice-admin", "X-GitHub-Api-Version": "2022-11-28"}
+    url = f"https://api.github.com/repos/{repo}/actions/workflows/{workflow}/dispatches"
+
+    def _post(u: str):
+        _urlreq.urlopen(_urlreq.Request(u, data=data, headers=headers, method="POST"), timeout=15)
+
     try:
-        _urlreq.urlopen(req, timeout=15)
+        try:
+            _post(url)
+        except _urlerr.HTTPError as e:
+            # GitHub редиректит /repos/{owner}/{name} -> /repositories/{id} (после переименования
+            # репо). urllib НЕ повторяет POST на 307/308 — делаем редирект вручную один раз.
+            loc = e.headers.get("Location") if e.code in (301, 307, 308) else None
+            if loc:
+                _post(loc)
+            else:
+                raise
     except Exception as exc:
         raise HTTPException(502, f"GitHub отклонил запуск: {exc}")
 
