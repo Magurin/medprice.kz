@@ -14,13 +14,28 @@ import CityPicker from "@/components/CityPicker";
 
 const PAGE = 25;
 
-type SortMode = "relevant" | "cheap" | "expensive";
+type SortMode = "relevant" | "cheap" | "expensive" | "near";
 
 const SORTS: [SortMode, string][] = [
   ["relevant", "релевантные"],
   ["cheap", "дешевле"],
   ["expensive", "дороже"],
+  ["near", "ближе"],
 ];
+
+// расстояние по координатам (км) — для сортировки «ближе»
+function haversineKm(aLat: number, aLng: number, bLat: number, bLng: number) {
+  const R = 6371, p = Math.PI / 180;
+  const dLat = (bLat - aLat) * p, dLng = (bLng - aLng) * p;
+  const s =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(aLat * p) * Math.cos(bLat * p) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(s));
+}
+
+function fmtKm(km: number) {
+  return km < 1 ? `${Math.round(km * 1000)} м` : `${km.toFixed(km < 10 ? 1 : 0)} км`;
+}
 
 // Релевантность = рейтинг 2ГИС (больший вес) + дешевизна.
 // У клиник без рейтинга берём нейтраль (~3.5/5), чтобы они не проваливались,
@@ -48,6 +63,28 @@ export default function ServicePage() {
   const [priceFrom, setPriceFrom] = useState("");
   const [priceTo, setPriceTo] = useState("");
   const [minRating, setMinRating] = useState(0);
+  const [userLoc, setUserLoc] = useState<{ lat: number; lng: number } | null>(null);
+  const [geoErr, setGeoErr] = useState<string | null>(null);
+
+  // выбор сортировки; «ближе» требует геолокации
+  const pickSort = (m: SortMode) => {
+    if (m === "near" && !userLoc) {
+      setGeoErr(null);
+      if (!("geolocation" in navigator)) {
+        setGeoErr("Геолокация не поддерживается браузером");
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        (p) => {
+          setUserLoc({ lat: p.coords.latitude, lng: p.coords.longitude });
+          setSort("near");
+        },
+        () => setGeoErr("Не удалось определить местоположение — разрешите доступ к геолокации")
+      );
+      return;
+    }
+    setSort(m);
+  };
   const [history, setHistory] = useState<HistoryResponse | null>(null);
 
   useEffect(() => {
@@ -103,7 +140,13 @@ export default function ServicePage() {
     const list = [...offers];
     if (sort === "cheap") list.sort((a, b) => a.price - b.price);
     else if (sort === "expensive") list.sort((a, b) => b.price - a.price);
-    else
+    else if (sort === "near" && userLoc) {
+      const d = (o: (typeof list)[number]) =>
+        o.lat != null && o.lng != null
+          ? haversineKm(userLoc.lat, userLoc.lng, o.lat, o.lng)
+          : Infinity;
+      list.sort((a, b) => d(a) - d(b) || a.price - b.price);
+    } else
       list.sort(
         (a, b) =>
           relevance(b.price, b.rating, min, max) - relevance(a.price, a.rating, min, max) ||
@@ -111,7 +154,7 @@ export default function ServicePage() {
           a.price - b.price
       );
     return list;
-  }, [offers, sort, data]);
+  }, [offers, sort, data, userLoc]);
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-7">
@@ -224,7 +267,7 @@ export default function ServicePage() {
               {SORTS.map(([key, label]) => (
                 <button
                   key={key}
-                  onClick={() => setSort(key)}
+                  onClick={() => pickSort(key)}
                   className={`rounded-lg px-2.5 py-1.5 transition-colors ${
                     sort === key ? "bg-brand-tint text-brand-ink" : "text-muted hover:text-foreground"
                   }`}
@@ -245,6 +288,12 @@ export default function ServicePage() {
               Релевантность учитывает рейтинг 2ГИС и цену: выше - клиники с лучшей оценкой при разумной цене.
             </p>
           )}
+          {sort === "near" && userLoc && (
+            <p className="mt-2 text-xs text-faint">
+              Сортировка по расстоянию от вашего местоположения. Клиники без координат - в конце списка.
+            </p>
+          )}
+          {geoErr && <p className="mt-2 text-xs text-warn">{geoErr}</p>}
 
           {/* ФИЛЬТРЫ: цена + рейтинг */}
           <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
@@ -356,6 +405,18 @@ export default function ServicePage() {
                       </div>
                     )}
                     <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-faint">
+                      {userLoc && o.lat != null && o.lng != null && (
+                        <>
+                          <span className="inline-flex shrink-0 items-center gap-1 font-medium text-brand-ink">
+                            <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z" />
+                              <circle cx="12" cy="10" r="3" />
+                            </svg>
+                            {fmtKm(haversineKm(userLoc.lat, userLoc.lng, o.lat, o.lng))}
+                          </span>
+                          <span className="text-line2">·</span>
+                        </>
+                      )}
                       {!o.address && <><span className="shrink-0">{cityLabel(o.city)}</span><span className="text-line2">·</span></>}
                       {o.working_hours && (
                         <>
