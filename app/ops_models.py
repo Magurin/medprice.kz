@@ -47,6 +47,21 @@ class ParseError(OpsBase):
     created_at = Column(DateTime, server_default=func.now())
 
 
+class LearnedMatch(OpsBase):
+    """Ручная привязка модератора (ТЗ §3.2): нормализованное raw-название -> услуга.
+    Живёт отдельно от витрины, чтобы переживать пересборку. service_code NULL = «не услуга»."""
+    __tablename__ = "learned_matches"
+    id = Column(Integer, primary_key=True)
+    norm_key = Column(String, unique=True, nullable=False, index=True)
+    service_code = Column(String, index=True)
+    service_name = Column(String)
+    category = Column(String)
+    raw_example = Column(Text)
+    occurrences = Column(Integer, default=0)
+    added_by = Column(String)
+    added_at = Column(DateTime, server_default=func.now())
+
+
 class RawPriceItem(OpsBase):
     __tablename__ = "raw_price_items"
     id = Column(Integer, primary_key=True)

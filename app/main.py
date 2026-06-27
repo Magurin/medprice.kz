@@ -21,7 +21,7 @@ from .database import get_db
 from .models import (
     City, Clinic, ParseLog, PriceHistory, PriceOffer, Service, Subscription, UnmatchedItem,
 )
-from .normalize import Matcher
+from .normalize import Matcher, normalize
 from .auth import verify_staff
 from . import notify
 
@@ -396,7 +396,7 @@ import json as _json
 import os as _os
 import urllib.request as _urlreq
 
-from .ops_models import ParseRun, ParseError, RawPriceItem
+from .ops_models import ParseRun, ParseError, RawPriceItem, LearnedMatch
 
 
 @app.get("/api/admin/me")
@@ -492,6 +492,108 @@ def parse_run_trigger(body: ParseRunBody, staff: dict = Depends(verify_staff),
     db.commit()
     db.refresh(run)
     return {"status": "queued", "run": _run_out(run)}
+
+
+# ---------- очередь ручной разметки (ТЗ §3.2) ----------
+@app.get("/api/admin/unmatched")
+def admin_unmatched(q: Optional[str] = None, limit: int = Query(50, le=200),
+                    offset: int = Query(0, ge=0), staff: dict = Depends(verify_staff),
+                    db: Session = Depends(get_db)):
+    """Непривязанные строки прайсов, сгруппированные по названию (частые — выше)."""
+    grp = (db.query(UnmatchedItem.raw_name.label("raw_name"),
+                    func.count().label("cnt"),
+                    func.min(UnmatchedItem.price).label("min_price"),
+                    func.max(UnmatchedItem.price).label("max_price"))
+           .group_by(UnmatchedItem.raw_name))
+    if q:
+        grp = grp.filter(UnmatchedItem.raw_name.ilike(f"%{q}%"))
+    total = grp.count()
+    rows = grp.order_by(func.count().desc(), UnmatchedItem.raw_name).offset(offset).limit(limit).all()
+    return {
+        "total": total, "limit": limit, "offset": offset,
+        "items": [{"raw_name": r.raw_name, "count": r.cnt,
+                   "min_price": r.min_price, "max_price": r.max_price} for r in rows],
+    }
+
+
+class AssignBody(BaseModel):
+    raw_name: str
+    service_code: str
+
+
+def _refresh_service_counts(db, service_id: int):
+    agg = (db.query(func.count(PriceOffer.id),
+                    func.count(func.distinct(PriceOffer.clinic_id)))
+           .filter(PriceOffer.service_id == service_id).first())
+    s = db.query(Service).get(service_id)
+    if s:
+        s.n_offers, s.n_clinics = agg[0] or 0, agg[1] or 0
+
+
+@app.post("/api/admin/unmatched/assign")
+def admin_unmatched_assign(body: AssignBody, staff: dict = Depends(verify_staff),
+                           db: Session = Depends(get_db)):
+    """Привязать все строки с этим названием к канонической услуге → создать сравнимые цены."""
+    svc = db.query(Service).filter(Service.code == body.service_code).first()
+    if not svc:
+        raise HTTPException(404, "Услуга с таким кодом не найдена")
+    items = db.query(UnmatchedItem).filter(UnmatchedItem.raw_name == body.raw_name).all()
+    if not items:
+        raise HTTPException(404, "Строки с таким названием уже нет в очереди")
+
+    created = 0
+    for u in items:
+        if u.clinic_id is not None and u.price is not None:
+            db.add(PriceOffer(
+                clinic_id=u.clinic_id, service_id=svc.id, raw_name=u.raw_name,
+                price=u.price, currency="KZT", match_method="manual", match_score=1.0,
+                source_type="manual", parsed_at=dt.datetime.now(dt.timezone.utc), is_active=True,
+            ))
+            created += 1
+        db.delete(u)
+
+    # запомнить решение (переживает пересборку витрины) — upsert по norm_key
+    nk = normalize(body.raw_name)
+    lm = db.query(LearnedMatch).filter(LearnedMatch.norm_key == nk).first()
+    if lm:
+        lm.service_code, lm.service_name, lm.category = svc.code, svc.name, svc.category
+        lm.occurrences = (lm.occurrences or 0) + len(items)
+        lm.added_by = staff.get("user_id")
+    else:
+        db.add(LearnedMatch(norm_key=nk, service_code=svc.code, service_name=svc.name,
+                            category=svc.category, raw_example=body.raw_name,
+                            occurrences=len(items), added_by=staff.get("user_id")))
+    db.commit()
+    _refresh_service_counts(db, svc.id)
+    db.commit()
+    return {"status": "assigned", "raw_name": body.raw_name, "service": svc.name,
+            "rows_closed": len(items), "offers_created": created}
+
+
+class SkipBody(BaseModel):
+    raw_name: str
+
+
+@app.post("/api/admin/unmatched/skip")
+def admin_unmatched_skip(body: SkipBody, staff: dict = Depends(verify_staff),
+                         db: Session = Depends(get_db)):
+    """Пометить строки как «не услуга» и убрать из очереди (решение запоминается)."""
+    items = db.query(UnmatchedItem).filter(UnmatchedItem.raw_name == body.raw_name).all()
+    if not items:
+        raise HTTPException(404, "Строки с таким названием уже нет в очереди")
+    n = len(items)
+    for u in items:
+        db.delete(u)
+    nk = normalize(body.raw_name)
+    lm = db.query(LearnedMatch).filter(LearnedMatch.norm_key == nk).first()
+    if lm:
+        lm.service_code, lm.occurrences = None, (lm.occurrences or 0) + n
+        lm.added_by = staff.get("user_id")
+    else:
+        db.add(LearnedMatch(norm_key=nk, service_code=None, raw_example=body.raw_name,
+                            occurrences=n, added_by=staff.get("user_id")))
+    db.commit()
+    return {"status": "skipped", "raw_name": body.raw_name, "rows_closed": n}
 
 
 @app.get("/api/parse-log")

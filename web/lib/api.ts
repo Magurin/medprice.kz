@@ -283,6 +283,13 @@ async function authReq<T>(method: string, path: string, token: string, body?: un
   return res.json();
 }
 
+export interface UnmatchedGroup {
+  raw_name: string;
+  count: number;
+  min_price: number | null;
+  max_price: number | null;
+}
+
 export const adminApi = {
   me: (token: string) => authReq<{ user_id: string; role: string }>("GET", "/api/admin/me", token),
   runs: (token: string) => authReq<ParseRunRow[]>("GET", "/api/admin/parse/runs", token),
@@ -290,6 +297,28 @@ export const adminApi = {
     authReq<ParseRunDetail>("GET", `/api/admin/parse/runs/${id}`, token),
   trigger: (token: string, body: { kind: string; limit?: number; hosts?: string }) =>
     authReq<{ status: string; run: ParseRunRow }>("POST", "/api/admin/parse/run", token, body),
+
+  // очередь ручной разметки (ТЗ §3.2)
+  unmatched: (token: string, q?: string) =>
+    authReq<{ total: number; items: UnmatchedGroup[] }>(
+      "GET",
+      `/api/admin/unmatched${qs({ q })}`,
+      token
+    ),
+  assignMatch: (token: string, raw_name: string, service_code: string) =>
+    authReq<{ status: string; service: string; rows_closed: number; offers_created: number }>(
+      "POST",
+      "/api/admin/unmatched/assign",
+      token,
+      { raw_name, service_code }
+    ),
+  skipMatch: (token: string, raw_name: string) =>
+    authReq<{ status: string; rows_closed: number }>(
+      "POST",
+      "/api/admin/unmatched/skip",
+      token,
+      { raw_name }
+    ),
 };
 
 export const tenge = (n: number) => `${n.toLocaleString("ru-RU")} ₸`;
