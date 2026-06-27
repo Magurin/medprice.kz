@@ -14,6 +14,24 @@ import CityPicker from "@/components/CityPicker";
 
 const PAGE = 25;
 
+type SortMode = "relevant" | "cheap" | "expensive";
+
+const SORTS: [SortMode, string][] = [
+  ["relevant", "релевантные"],
+  ["cheap", "дешевле"],
+  ["expensive", "дороже"],
+];
+
+// Релевантность = рейтинг 2ГИС (больший вес) + дешевизна.
+// У клиник без рейтинга берём нейтраль (~3.5/5), чтобы они не проваливались,
+// пока оценки 2ГИС не подтянутся ко всем. Пример: 5.0@2000 релевантнее, чем 2.0@1500.
+function relevance(price: number, rating: number | null | undefined, min: number, max: number) {
+  const span = max - min || 1;
+  const cheap = (max - price) / span; // 0..1, дешевле = выше
+  const r = rating != null ? rating / 5 : 0.7; // 0..1
+  return 0.65 * r + 0.35 * cheap;
+}
+
 export default function ServicePage() {
   const params = useParams<{ code: string }>();
   const code = decodeURIComponent(params.code);
@@ -26,6 +44,7 @@ export default function ServicePage() {
   const [err, setErr] = useState<string | null>(null);
   const [limit, setLimit] = useState(PAGE);
   const [filter, setFilter] = useState("");
+  const [sort, setSort] = useState<SortMode>("relevant");
   const [history, setHistory] = useState<HistoryResponse | null>(null);
 
   useEffect(() => {
@@ -65,6 +84,22 @@ export default function ServicePage() {
         o.raw_name.toLowerCase().includes(f)
     );
   }, [data, filter]);
+
+  const sorted = useMemo(() => {
+    if (!data) return offers;
+    const { min, max } = data.stats;
+    const list = [...offers];
+    if (sort === "cheap") list.sort((a, b) => a.price - b.price);
+    else if (sort === "expensive") list.sort((a, b) => b.price - a.price);
+    else
+      list.sort(
+        (a, b) =>
+          relevance(b.price, b.rating, min, max) - relevance(a.price, a.rating, min, max) ||
+          (b.reviews_count ?? 0) - (a.reviews_count ?? 0) ||
+          a.price - b.price
+      );
+    return list;
+  }, [offers, sort, data]);
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-7">
@@ -158,11 +193,21 @@ export default function ServicePage() {
             </div>
           )}
 
-          {/* FILTER */}
-          <div className="mt-6 flex items-center justify-between gap-3">
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-faint">
-              Клиники · от дешёвых к дорогим
-            </h2>
+          {/* SORT + FILTER */}
+          <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-1 rounded-xl border border-line bg-surface p-1 text-xs font-medium">
+              {SORTS.map(([key, label]) => (
+                <button
+                  key={key}
+                  onClick={() => setSort(key)}
+                  className={`rounded-lg px-2.5 py-1.5 transition-colors ${
+                    sort === key ? "bg-brand-tint text-brand-ink" : "text-muted hover:text-foreground"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
             <input
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
@@ -170,21 +215,27 @@ export default function ServicePage() {
               className="h-9 w-40 rounded-lg border border-line2 bg-surface px-3 text-sm text-foreground outline-none transition-colors focus:border-brand sm:w-52"
             />
           </div>
+          {sort === "relevant" && (
+            <p className="mt-2 text-xs text-faint">
+              Релевантность учитывает рейтинг 2ГИС и цену: выше — клиники с лучшей оценкой при разумной цене.
+            </p>
+          )}
 
           {/* LIST */}
           <div className="mt-3 overflow-hidden rounded-2xl border border-line bg-surface">
-            {offers.slice(0, limit).map((o, i) => {
-              const best = i === 0 && !filter;
+            {sorted.slice(0, limit).map((o, i) => {
+              const top = i === 0 && !filter && sort !== "expensive";
+              const cheapest = o.price === data.stats.min;
               return (
                 <div
                   key={`${o.clinic}-${i}`}
                   className={`flex items-center gap-3 border-b border-line px-4 py-3 last:border-0 ${
-                    best ? "bg-deal-tint/40" : "hover:bg-surface2"
+                    top ? "bg-deal-tint/40" : "hover:bg-surface2"
                   }`}
                 >
                   <span
                     className={`grid h-7 w-7 shrink-0 place-items-center rounded-full text-xs font-bold tabular-nums ${
-                      best ? "bg-deal text-white" : "bg-surface2 text-faint"
+                      top ? "bg-deal text-white" : "bg-surface2 text-faint"
                     }`}
                   >
                     {i + 1}
@@ -205,9 +256,9 @@ export default function ServicePage() {
                       ) : (
                         <span className="truncate font-medium text-foreground">{prettyClinic(o.clinic)}</span>
                       )}
-                      {best && (
+                      {top && (
                         <span className="shrink-0 rounded-full bg-deal px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
-                          лучшая цена
+                          {sort === "cheap" ? "лучшая цена" : "рекомендуем"}
                         </span>
                       )}
                       {o.rating != null && (
@@ -230,7 +281,7 @@ export default function ServicePage() {
                   </div>
 
                   <div className="shrink-0 whitespace-nowrap text-right">
-                    <span className={`text-base font-bold tabular-nums ${best ? "text-deal" : "text-foreground"}`}>
+                    <span className={`text-base font-bold tabular-nums ${cheapest ? "text-deal" : "text-foreground"}`}>
                       {o.is_from && <span className="mr-0.5 text-xs font-normal text-faint">от</span>}
                       {tenge(o.price)}
                     </span>
