@@ -31,15 +31,40 @@ if DATABASE_URL.startswith("sqlite"):
 if DATABASE_URL.startswith("postgresql://"):
     DATABASE_URL = "postgresql+psycopg://" + DATABASE_URL[len("postgresql://"):]
 
-# Postgres через пулер Supabase на serverless (Vercel):
-#  - NullPool: не держим коннекты между вызовами функции
+# Режим пула (DB_POOL):
+#  • persistent (по умолчанию) — постоянный сервер (gunicorn на VM): держим тёплые
+#    соединения и НЕ платим TCP+TLS+auth к Supabase на каждый запрос. Критично,
+#    т.к. VM (me-abudhabi-1) и БД (eu-central-1) в разных регионах (~120мс RTT) —
+#    переустановка коннекта добавляла ~1с к каждому запросу.
+#  • null — для serverless/одноразовых скриптов (DB_POOL=null): не держим коннекты.
+_POOL = os.environ.get("DB_POOL", "persistent").lower()
+
+# connect_args:
 #  - prepare_threshold=None: транзакционный пулер (6543) несовместим с prepared statements
-engine = create_engine(
-    DATABASE_URL,
-    poolclass=NullPool,
-    connect_args={"prepare_threshold": None},
-    future=True,
-)
+#  - keepalives: пулер Supabase/NAT рвут простаивающие коннекты — не даём им стухнуть
+_connect_args = {
+    "prepare_threshold": None,
+    "keepalives": 1,
+    "keepalives_idle": 30,
+    "keepalives_interval": 10,
+    "keepalives_count": 3,
+}
+
+if _POOL == "null":
+    engine = create_engine(
+        DATABASE_URL, poolclass=NullPool, connect_args=_connect_args, future=True,
+    )
+else:
+    engine = create_engine(
+        DATABASE_URL,
+        pool_size=5,           # тёплые коннекты на воркер (×2 воркера gunicorn)
+        max_overflow=5,
+        pool_timeout=10,
+        pool_recycle=180,      # короче времени жизни idle-коннекта у пулера Supabase
+        pool_pre_ping=True,    # молча отбрасываем стухший коннект вместо ошибки клиенту
+        connect_args=_connect_args,
+        future=True,
+    )
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 Base = declarative_base()
