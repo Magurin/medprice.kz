@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { api, CityRow, ClinicRow } from "@/lib/api";
 import ClinicsMap from "@/components/ClinicsMap";
 import Rating from "@/components/Rating";
@@ -62,20 +63,30 @@ export default function ClinicsPage() {
         <ul className="order-2 max-h-[420px] space-y-1 overflow-y-auto lg:order-1 lg:max-h-[600px]">
           {filtered.map((c) => (
             <li key={c.id}>
-              <button
-                onClick={() => setSelectedId(c.id)}
-                className={`w-full rounded-xl border px-3 py-2.5 text-left transition-colors ${
+              <div
+                className={`rounded-xl border px-3 py-2.5 transition-colors ${
                   c.id === selectedId
                     ? "border-brand/50 bg-surface2"
                     : "border-line bg-surface hover:bg-surface2"
                 }`}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <div className="font-medium leading-snug text-foreground">{c.name}</div>
+                  <button onClick={() => setSelectedId(c.id)} className="min-w-0 flex-1 text-left font-medium leading-snug text-foreground">
+                    {c.name}
+                  </button>
                   <Rating rating={c.rating} count={c.reviews_count} url={c.twogis_url} size="xs" />
                 </div>
                 {c.address && <div className="mt-0.5 text-xs text-muted">{c.address}</div>}
-              </button>
+                <Link
+                  href={`/clinics/${c.id}`}
+                  className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-brand-ink hover:underline"
+                >
+                  Услуги и контакты
+                  <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="m9 18 6-6-6-6" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </Link>
+              </div>
             </li>
           ))}
           {!loading && filtered.length === 0 && (

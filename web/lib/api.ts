@@ -32,6 +32,32 @@ export interface ClinicRow {
   twogis_url?: string | null;
 }
 
+export interface ClinicService {
+  code: string;
+  service: string;
+  category: string | null;
+  price: number;
+  raw_name: string;
+}
+
+export interface ClinicCard {
+  id: number;
+  name: string;
+  city: string | null;
+  address: string | null;
+  phone: string | null;
+  working_hours: string | null;
+  source_url: string | null;
+  source_type: string | null;
+  lat: number | null;
+  lng: number | null;
+  rating?: number | null;
+  reviews_count?: number | null;
+  twogis_url?: string | null;
+  services_count: number;
+  services: ClinicService[];
+}
+
 export interface CategoryRow {
   category: string;
   services: number;
@@ -215,6 +241,7 @@ export const api = {
   cities: () => get<CityRow[]>("/api/cities"),
   clinics: (p: { city?: string; q?: string; with_coords?: boolean; limit?: number }) =>
     get<ClinicRow[]>(`/api/clinics${qs({ ...p, with_coords: p.with_coords ? 1 : undefined })}`),
+  clinicCard: (id: number) => get<ClinicCard>(`/api/clinics/${id}`),
   categories: () => get<CategoryRow[]>("/api/categories"),
   services: (p: { q?: string; category?: string; min_clinics?: number; limit?: number }) =>
     get<ServiceRow[]>(`/api/services${qs(p)}`),

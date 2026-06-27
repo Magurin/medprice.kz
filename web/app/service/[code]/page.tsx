@@ -243,7 +243,14 @@ export default function ServicePage() {
 
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      {o.source_url ? (
+                      {o.clinic_id ? (
+                        <Link
+                          href={`/clinics/${o.clinic_id}`}
+                          className="truncate font-medium text-foreground hover:text-brand-ink hover:underline"
+                        >
+                          {prettyClinic(o.clinic)}
+                        </Link>
+                      ) : o.source_url ? (
                         <a
                           href={o.source_url}
                           target="_blank"
