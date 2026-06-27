@@ -344,6 +344,13 @@ export default function ServicePage() {
             {sorted.slice(0, limit).map((o, i) => {
               const top = i === 0 && !filter && sort !== "expensive";
               const cheapest = o.price === data.stats.min;
+              // подозрительно низкая цена: вчетверо ниже медианы рынка
+              // (частая причина — опечатка в прайсе, напр. 1500 вместо 15000).
+              const suspicious =
+                data.stats.count >= 4 &&
+                data.stats.median > 0 &&
+                o.price > 0 &&
+                o.price < data.stats.median * 0.25;
               return (
                 <div
                   key={`${o.clinic}-${i}`}
@@ -427,7 +434,16 @@ export default function ServicePage() {
                     </div>
                   </div>
 
-                  <div className="shrink-0 whitespace-nowrap text-right">
+                  <div className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-right">
+                    {suspicious && (
+                      <span
+                        title="Стоит проверить данные — цена заметно ниже рынка, возможна опечатка в прайсе"
+                        aria-label="Стоит проверить данные"
+                        className="grid h-5 w-5 shrink-0 cursor-help place-items-center rounded-full border border-[#b9722a] bg-[#fde9cc] text-[11px] font-bold text-[#8a4f17]"
+                      >
+                        ?
+                      </span>
+                    )}
                     <span className={`text-base font-bold tabular-nums ${cheapest ? "text-deal" : "text-foreground"}`}>
                       {o.is_from && <span className="mr-0.5 text-xs font-normal text-faint">от</span>}
                       {tenge(o.price)}
