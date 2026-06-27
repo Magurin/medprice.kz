@@ -196,6 +196,15 @@ def run():
         for code, (sid, name, cat, is_cur, meth) in svc.items()
     ]
 
+    # --- предохранитель: пустой вход НЕ должен обнулить прод ---
+    # (в CI raw/*.jsonl gitignored и отсутствуют; без этого DELETE FROM price_offers
+    #  снёс бы все цены без повторной вставки). Пишем, только если есть и клиники, и цены.
+    if not clinic_rows or not offer_rows:
+        print("=== INGEST SKIPPED ===")
+        print(f"  пустой вход: clinics={len(clinic_rows)} offers={len(offer_rows)} "
+              f"(нет harvester/raw/*.jsonl?) — БД не тронута")
+        return
+
     # --- запись: только DML (см. модульный docstring) ---
     def _upsert(conn, table, rows, conflict, update_cols):
         for batch in _chunks(rows, 500):
