@@ -75,8 +75,10 @@ function Results() {
           setRows(r);
           setPriced([]);
         } else {
+          // каталог по умолчанию — весь перечень услуг, по популярности
+          const r = await api.services({ min_clinics: 2, limit: 500 });
+          setRows(r);
           setPriced([]);
-          setRows([]);
         }
       } catch (e) {
         setErr(String(e));
@@ -96,7 +98,7 @@ function Results() {
   });
 
   const categoryLabel = category === "Прочее" ? "Все услуги" : category;
-  const title = q ? `«${q}»` : category ? categoryLabel : "Поиск услуг";
+  const title = q ? `«${q}»` : category ? categoryLabel : "Все услуги";
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-7">
@@ -107,8 +109,8 @@ function Results() {
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-baseline gap-2">
           <h1 className="text-xl font-semibold tracking-tight text-foreground">{title}</h1>
-          {!loading && priced.length > 0 && (
-            <span className="text-sm text-faint">{priced.length} услуг</span>
+          {!loading && (priced.length > 0 || rows.length > 0) && (
+            <span className="text-sm text-faint">{priced.length || rows.length} услуг</span>
           )}
         </div>
         {priced.length > 1 && (
@@ -141,7 +143,7 @@ function Results() {
       )}
       {err && <div className="rounded-xl bg-warn-tint p-4 text-warn">Ошибка загрузки: {err}</div>}
 
-      {!loading && !err && (q || category) && sorted.length === 0 && rows.length === 0 && (
+      {!loading && !err && sorted.length === 0 && rows.length === 0 && (
         <div className="rounded-2xl border border-line bg-surface px-4 py-16 text-center">
           <div className="text-foreground">Ничего не нашлось</div>
           <div className="mt-1 text-sm text-muted">Попробуйте другое название услуги.</div>

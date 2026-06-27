@@ -254,7 +254,7 @@ export default async function Home() {
               {categories.slice(0, 12).map((c) => (
                 <Link
                   key={c.category}
-                  href={`/search?category=${encodeURIComponent(c.category)}`}
+                  href={c.category === "Прочее" ? "/search" : `/search?category=${encodeURIComponent(c.category)}`}
                   className="group flex items-center justify-between rounded-xl border border-line bg-surface px-4 py-3.5 transition-colors hover:border-brand/40 hover:bg-surface2"
                 >
                   <span className="min-w-0">
