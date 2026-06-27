@@ -1,0 +1,40 @@
+# --- секреты / локальное окружение ---
+.env
+.env.*
+**/.env
+**/.env.local
+# run.ps1 содержит пароль БД (loader) — держим только локально
+run.ps1
+
+# --- IDE ---
+.idea/
+
+# --- Vercel ---
+.vercel
+web/.vercel
+
+# --- Node / Next ---
+node_modules/
+web/node_modules/
+.next/
+web/.next/
+web/tsconfig.tsbuildinfo
+web/dev.log
+
+# --- Python ---
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+
+# --- логи ---
+*.log
+
+# --- сырые/производные данные (пересобираются парсером/ingest) ---
+harvester/raw/
+*.jsonl
+*.db
+
+# --- тяжёлые исходные файлы прайсов (11M, не нужны для cron) ---
+# (папка Хакатон с примерами прайсов)
+Хакатон/

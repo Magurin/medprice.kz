@@ -1,0 +1,227 @@
+"""
+parser.py — модуль сбора данных (ТЗ §3.1). Единый оркестратор для двух путей запуска:
+  • вручную из интерфейса  -> бэкенд триггерит GitHub Actions (workflow_dispatch)
+  • по расписанию (cron)    -> тот же workflow по schedule
+И там, и там на раннере выполняется ОДНА функция run_parse() — без дубля логики.
+
+Что делает один прогон:
+  1. Заводит запись parse_runs (status=running).
+  2. Обходит источники нужного формата:
+       web  — хосты 103.kz (harvester.harvest: HTML)
+       file — файлы прайсов (app.fileparse: PDF / DOCX / XLSX / XLS)
+  3. Складывает позиции «как пришли» в raw_price_items (СЫРОЙ слой, отдельно от
+     нормализованных price_offers).
+  4. Дедупликация: content_hash = sha256(source|raw_name|price), колонка UNIQUE,
+     вставка ON CONFLICT DO NOTHING -> повторный запуск не плодит дубли.
+  5. Любая ошибка по источнику пишется в parse_errors (источник + стадия + причина),
+     прогон продолжается дальше.
+  6. Финализирует parse_runs (счётчики, status=done/failed).
+
+Запуск (раннер/cron):
+  python -m app.parser --kind web  --limit 50
+  python -m app.parser --kind web  --hosts almaty-clinic.103.kz,kdl.103.kz
+  python -m app.parser --kind file --paths "Хакатон/*.xlsx,Хакатон/*.pdf"
+"""
+import argparse
+import datetime as dt
+import glob
+import hashlib
+import os
+import sys
+
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+from .database import SessionLocal
+from .ops_models import OpsBase, ParseRun, ParseError, RawPriceItem
+from .database import engine
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+# ---------- утилиты ----------
+def _hash(source: str, raw_name: str, price) -> str:
+    key = f"{source}|{(raw_name or '').strip().lower()}|{price if price is not None else ''}"
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+
+def _log_error(db, run_id, source, stage, exc):
+    db.add(ParseError(run_id=run_id, source=source, stage=stage, error=str(exc)[:2000]))
+    db.commit()
+
+
+def _store_rows(db, run_id, rows) -> tuple[int, int]:
+    """Bulk-вставка raw-строк с дедупом по content_hash. -> (new, dup)."""
+    if not rows:
+        return 0, 0
+    new = 0
+    CHUNK = 500
+    for i in range(0, len(rows), CHUNK):
+        batch = rows[i:i + CHUNK]
+        stmt = (
+            pg_insert(RawPriceItem.__table__)
+            .values(batch)
+            .on_conflict_do_nothing(index_elements=["content_hash"])
+            .returning(RawPriceItem.id)
+        )
+        res = db.execute(stmt)
+        new += len(res.fetchall())
+        db.commit()
+    return new, len(rows) - new
+
+
+# ---------- источники: web (103.kz) ----------
+def _import_harvester():
+    """harvester/ — не пакет; добавляем в путь и импортируем harvest как модуль."""
+    hdir = os.path.join(ROOT, "harvester")
+    if hdir not in sys.path:
+        sys.path.insert(0, hdir)
+    import harvest  # type: ignore
+    return harvest
+
+
+def _web_hosts(sources, limit):
+    if sources:
+        return sources
+    frontier = os.path.join(ROOT, "harvester", "frontier.txt")
+    if not os.path.exists(frontier):
+        return []
+    hosts = [h.strip() for h in open(frontier, encoding="utf-8") if h.strip()]
+    return hosts[:limit] if limit else hosts
+
+
+def _parse_web_source(harvest, host):
+    """host -> список raw-строк. Бросает исключение со стадией в .stage."""
+    html = harvest.fetch(f"https://{host}/pricing/")
+    if html is None:
+        e = RuntimeError("страница недоступна (timeout/HTTP error)")
+        e.stage = "fetch"
+        raise e
+    try:
+        clinic, offers = harvest.parse_clinic(host, html)
+    except Exception as exc:
+        exc.stage = "parse"
+        raise
+    rows = []
+    for o in offers:
+        rows.append({
+            "source_kind": "web", "source": host, "clinic_host": host,
+            "raw_name": o["raw_name"], "category": o.get("category"),
+            "price": o.get("price"), "price_text": None, "currency": o.get("currency", "KZT"),
+            "content_hash": _hash(host, o["raw_name"], o.get("price")),
+        })
+    return rows
+
+
+# ---------- источники: file (PDF/DOCX/XLSX/XLS) ----------
+def _parse_file_source(path):
+    from .fileparse import parse_file
+    try:
+        recs = parse_file(path)
+    except Exception as exc:
+        exc.stage = "parse"
+        raise
+    base = os.path.basename(path)
+    rows = []
+    for r in recs:
+        rows.append({
+            "source_kind": "file", "source": base, "clinic_host": None,
+            "raw_name": r["raw_name"], "category": r.get("section"),
+            "price": r.get("price"), "price_text": None, "currency": r.get("currency", "KZT"),
+            "content_hash": _hash(base, r["raw_name"], r.get("price")),
+        })
+    return rows
+
+
+def _expand_paths(specs):
+    out = []
+    for spec in specs:
+        spec = spec.strip()
+        if not spec:
+            continue
+        matched = glob.glob(os.path.join(ROOT, spec)) or glob.glob(spec)
+        out.extend(matched or [spec])
+    return out
+
+
+# ---------- оркестратор ----------
+def run_parse(kind: str, sources=None, limit: int = 50, trigger: str = "manual") -> int:
+    """Один прогон парсинга. Возвращает run_id."""
+    OpsBase.metadata.create_all(engine)  # на случай первого запуска
+    db = SessionLocal()
+    run = ParseRun(source_kind=kind, trigger=trigger, status="running")
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    run_id = run.id
+
+    if kind == "web":
+        harvest = _import_harvester()
+        items = _web_hosts(sources, limit)
+        handler = lambda s: _parse_web_source(harvest, s)
+    elif kind == "file":
+        items = _expand_paths(sources or [])
+        handler = _parse_file_source
+    else:
+        run.status = "failed"; run.note = f"неизвестный kind: {kind}"
+        run.finished_at = dt.datetime.now(dt.timezone.utc); db.commit(); db.close()
+        raise SystemExit(f"неизвестный kind: {kind}")
+
+    run.sources_total = len(items)
+    db.commit()
+    ok = failed = rows_raw = rows_new = rows_dup = 0
+
+    for src in items:
+        try:
+            rows = handler(src)
+        except Exception as exc:
+            failed += 1
+            _log_error(db, run_id, str(src), getattr(exc, "stage", "parse"), exc)
+            continue
+        try:
+            new, dup = _store_rows(db, run_id, rows)
+        except Exception as exc:
+            failed += 1
+            db.rollback()
+            _log_error(db, run_id, str(src), "store", exc)
+            continue
+        ok += 1
+        rows_raw += len(rows); rows_new += new; rows_dup += dup
+        run.sources_ok = ok; run.sources_failed = failed
+        run.rows_raw = rows_raw; run.rows_new = rows_new; run.rows_dup = rows_dup
+        db.commit()
+
+    run.sources_ok = ok
+    run.sources_failed = failed
+    run.rows_raw = rows_raw
+    run.rows_new = rows_new
+    run.rows_dup = rows_dup
+    run.status = "done"
+    run.finished_at = dt.datetime.now(dt.timezone.utc)
+    run.note = f"источников: ok={ok}, ошибок={failed}; строк: {rows_raw} (новых {rows_new}, дублей {rows_dup})"
+    db.commit()
+    print(run.note, flush=True)
+    db.close()
+    return run_id
+
+
+def main():
+    ap = argparse.ArgumentParser(description="MedPrice — модуль сбора данных (ТЗ §3.1)")
+    ap.add_argument("--kind", choices=["web", "file"], required=True)
+    ap.add_argument("--limit", type=int, default=50, help="макс. источников за прогон (web, из frontier)")
+    ap.add_argument("--hosts", default="", help="web: список хостов через запятую (вместо frontier)")
+    ap.add_argument("--paths", default="", help="file: пути/глобы через запятую")
+    ap.add_argument("--trigger", default="cron")
+    args = ap.parse_args()
+
+    sources = None
+    if args.kind == "web" and args.hosts:
+        sources = [h.strip() for h in args.hosts.split(",") if h.strip()]
+    if args.kind == "file":
+        sources = [p for p in args.paths.split(",") if p.strip()]
+
+    run_id = run_parse(args.kind, sources=sources, limit=args.limit, trigger=args.trigger)
+    print(f"run_id={run_id}", flush=True)
+
+
+if __name__ == "__main__":
+    main()
