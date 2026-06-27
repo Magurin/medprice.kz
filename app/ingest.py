@@ -222,6 +222,16 @@ def run():
             conn.execute(insert(models.City.__table__), new_city_rows)
         _upsert(conn, models.Clinic.__table__, clinic_rows, "host", _CLINIC_UPDATE)
         _upsert(conn, models.Service.__table__, service_rows, "code", _SERVICE_UPDATE)
+        # cities/clinics/services ингест вставляет с ЯВНЫМ id (max+1), что НЕ двигает
+        # их sequence. Двигаем вручную за максимум, иначе ручная вставка из админки
+        # (id из sequence) столкнётся с уже занятым ингестом id. Ср. price_offers ниже.
+        for seq, tbl in (("cities_id_seq", "cities"),
+                         ("clinics_id_seq", "clinics"),
+                         ("services_id_seq", "services")):
+            conn.execute(text(
+                f"SELECT setval('{seq}', "
+                f"GREATEST((SELECT COALESCE(MAX(id), 0) FROM {tbl}), 1))"
+            ))
         # price_offers: пересобираем ТОЛЬКО веб-цены. Ручные/импортные строки
         # (source_type 'manual'/'file', внесённые модераторами через админку)
         # сохраняем — они не приходят из harvester и иначе были бы потеряны.

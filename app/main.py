@@ -804,19 +804,13 @@ def _slug_host(name: str) -> str:
     return base.strip("-") or "manual-clinic"
 
 
-def _next_id(db, model):
-    """Следующий id для таблиц без sequence (cities/clinics заполняются явным id —
-    их PK без DEFAULT, sequence создать нельзя: loader не владелец таблиц)."""
-    return (db.query(func.coalesce(func.max(model.id), 0)).scalar() or 0) + 1
-
-
 def _ensure_city(db, name):
     name = (name or "").strip()
     if not name:
         return None
     c = db.query(City).filter(City.name == name).first()
     if not c:
-        c = City(id=_next_id(db, City), name=name)
+        c = City(name=name)  # id из sequence cities_id_seq
         db.add(c)
         db.flush()
     return c.id
@@ -907,8 +901,7 @@ def admin_clinic_create(body: ClinicCreate, staff: dict = Depends(verify_staff),
             i += 1
             host = f"{base}-{i}"
     c = Clinic(
-        id=_next_id(db, Clinic),
-        host=host, name=name, city_id=_ensure_city(db, body.city),
+        host=host, name=name, city_id=_ensure_city(db, body.city),  # id из sequence
         address=body.address, phone=body.phone, working_hours=body.working_hours,
         source_url=body.source_url, source_type="manual", lat=body.lat, lng=body.lng,
     )
