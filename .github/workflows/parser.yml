@@ -1,12 +1,16 @@
 name: parser-collect
 
 # Модуль сбора данных (ТЗ §3.1). Два пути запуска — одна и та же команда:
-#   • schedule        — по расписанию (cron)
-#   • workflow_dispatch — вручную (кнопка в админке дёргает этот же dispatch через API)
+#   • schedule         — по расписанию. Точное время задаётся в АДМИНКЕ (БД), а не здесь:
+#                        workflow будится часто (каждые 30 мин), а шаг «Schedule gate»
+#                        сверяется с таблицей parse_schedule и парсит только в выбранное
+#                        время. Так время меняется из UI без правки этого YAML.
+#   • workflow_dispatch — вручную (кнопка в админке дёргает этот же dispatch через API);
+#                        гейт не применяется — запускаем сразу.
 # Требуется секрет репозитория DATABASE_URL (session pooler, :5432, роль loader).
 on:
   schedule:
-    - cron: "30 2 * * *"   # ежедневно 02:30 UTC, перед обновлением рейтингов (03:00)
+    - cron: "*/30 * * * *"   # каждые 30 мин; фактическое время парсинга — в админке (gate)
   workflow_dispatch:
     inputs:
       kind:
@@ -31,13 +35,25 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements-dev.txt
+
+      # Гейт расписания: только для запуска по cron. Печатает run/kind/limit из БД.
+      - name: Schedule gate
+        id: gate
+        if: ${{ github.event_name == 'schedule' }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -X utf8 -m app.scheduling
+
+      # Запускаем парсер, если это ручной dispatch ИЛИ гейт разрешил запуск по расписанию.
+      # Параметры по расписанию (kind/limit) берём из БД (вывод гейта), при ручном — из inputs.
       - name: Run parser
+        if: ${{ github.event_name != 'schedule' || steps.gate.outputs.run == 'true' }}
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           python -X utf8 -m app.parser \
-            --kind  "${{ github.event.inputs.kind  || 'web' }}" \
-            --limit "${{ github.event.inputs.limit || '200' }}" \
+            --kind  "${{ github.event.inputs.kind  || steps.gate.outputs.kind  || 'web' }}" \
+            --limit "${{ github.event.inputs.limit || steps.gate.outputs.limit || '200' }}" \
             --hosts "${{ github.event.inputs.hosts || '' }}" \
             --paths "${{ github.event.inputs.paths || '' }}" \
             --trigger "${{ github.event_name == 'schedule' && 'cron' || 'dispatch' }}"
@@ -45,7 +61,7 @@ jobs:
       # После сбора сырья — пересборка нормализованной витрины и чистка кэша фронта.
       # Шаг можно отключить, если ingest гоняется отдельно.
       - name: Re-ingest (raw -> normalized)
-        if: ${{ github.event.inputs.kind != 'file' }}
+        if: ${{ (github.event_name != 'schedule' || steps.gate.outputs.run == 'true') && (github.event.inputs.kind || steps.gate.outputs.kind || 'web') != 'file' }}
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python -X utf8 -m app.ingest || echo "ingest пропущен/недоступен"

@@ -284,6 +284,7 @@ export interface ParseRunRow {
   status: string;
   started_at: string | null;
   finished_at: string | null;
+  duration_sec: number | null;
   sources_total: number;
   sources_ok: number;
   sources_failed: number;
@@ -292,8 +293,29 @@ export interface ParseRunRow {
   rows_dup: number;
   note: string | null;
 }
+export interface ParseLogLine {
+  ts: string | null;
+  level: string; // info | warn | error
+  source: string | null;
+  stage: string | null;
+  message: string | null;
+}
 export interface ParseRunDetail extends ParseRunRow {
   errors: { source: string; stage: string; error: string; created_at: string | null }[];
+  logs: ParseLogLine[];
+}
+
+export interface ParseScheduleRow {
+  enabled: boolean;
+  hour: number; // UTC
+  minute: number; // UTC
+  time_utc: string;
+  time_almaty: string;
+  kind: string;
+  run_limit: number;
+  step_minutes: number;
+  updated_at: string | null;
+  updated_by: string | null;
 }
 
 async function authReq<T>(method: string, path: string, token: string, body?: unknown): Promise<T> {
@@ -331,6 +353,14 @@ export const adminApi = {
     authReq<ParseRunDetail>("GET", `/api/admin/parse/runs/${id}`, token),
   trigger: (token: string, body: { kind: string; limit?: number; hosts?: string }) =>
     authReq<{ status: string; run: ParseRunRow }>("POST", "/api/admin/parse/run", token, body),
+
+  // расписание ежедневного парсинга (ТЗ §3.1: запуск по cron, время — из UI)
+  schedule: (token: string) =>
+    authReq<ParseScheduleRow>("GET", "/api/admin/parse/schedule", token),
+  saveSchedule: (
+    token: string,
+    body: { enabled?: boolean; hour?: number; minute?: number; kind?: string; run_limit?: number }
+  ) => authReq<ParseScheduleRow>("PUT", "/api/admin/parse/schedule", token, body),
 
   // очередь ручной разметки (ТЗ §3.2)
   unmatched: (token: string, q?: string) =>

@@ -32,7 +32,7 @@ import sys
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from .database import SessionLocal
-from .ops_models import OpsBase, ParseRun, ParseError, RawPriceItem
+from .ops_models import OpsBase, ParseRun, ParseError, ParseRunLog, RawPriceItem
 from .database import engine
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -44,9 +44,20 @@ def _hash(source: str, raw_name: str, price) -> str:
     return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
 
+def _log(db, run_id, message, level="info", source=None, stage=None):
+    """Строка в подробный лог прогона (видна в админке). Дублируется в stdout раннера."""
+    db.add(ParseRunLog(run_id=run_id, level=level, source=source, stage=stage,
+                       message=str(message)[:4000]))
+    db.commit()
+    prefix = f"[{level}]" + (f" {source}" if source else "")
+    print(f"{prefix} {message}", flush=True)
+
+
 def _log_error(db, run_id, source, stage, exc):
     db.add(ParseError(run_id=run_id, source=source, stage=stage, error=str(exc)[:2000]))
     db.commit()
+    # та же ошибка попадает и в подробный лог — чтобы хронология прогона была полной
+    _log(db, run_id, str(exc)[:2000], level="error", source=source, stage=stage)
 
 
 def _store_rows(db, run_id, rows) -> tuple[int, int]:
@@ -180,62 +191,81 @@ def run_parse(kind: str, sources=None, limit: int = 50, trigger: str = "manual")
     db.commit()
     db.refresh(run)
     run_id = run.id
+    _log(db, run_id, f"старт прогона: kind={kind}, trigger={trigger}, limit={limit}", stage="run")
 
-    if kind == "web":
-        harvest = _import_harvester()
-        items = _web_hosts(db, sources, limit)
-        handler = lambda s: _parse_web_source(harvest, s)
-        if not sources:  # прогон по источникам из БД — отметим их как использованные
-            try:
-                from .ops_models import ParseSource
-                now = dt.datetime.now(dt.timezone.utc)
-                for s in db.query(ParseSource).filter(ParseSource.enabled.is_(True)).all():
-                    s.last_run_at = now
-                db.commit()
-            except Exception:
-                db.rollback()
-    elif kind == "file":
-        items = _expand_paths(sources or [])
-        handler = _parse_file_source
-    else:
-        run.status = "failed"; run.note = f"неизвестный kind: {kind}"
-        run.finished_at = dt.datetime.now(dt.timezone.utc); db.commit(); db.close()
-        raise SystemExit(f"неизвестный kind: {kind}")
+    try:
+        if kind == "web":
+            harvest = _import_harvester()
+            items = _web_hosts(db, sources, limit)
+            handler = lambda s: _parse_web_source(harvest, s)
+            if not sources:  # прогон по источникам из БД — отметим их как использованные
+                try:
+                    from .ops_models import ParseSource
+                    now = dt.datetime.now(dt.timezone.utc)
+                    for s in db.query(ParseSource).filter(ParseSource.enabled.is_(True)).all():
+                        s.last_run_at = now
+                    db.commit()
+                except Exception:
+                    db.rollback()
+        elif kind == "file":
+            items = _expand_paths(sources or [])
+            handler = _parse_file_source
+        else:
+            run.status = "failed"; run.note = f"неизвестный kind: {kind}"
+            run.finished_at = dt.datetime.now(dt.timezone.utc)
+            _log(db, run_id, f"неизвестный kind: {kind}", level="error", stage="run")
+            db.commit(); db.close()
+            raise SystemExit(f"неизвестный kind: {kind}")
 
-    run.sources_total = len(items)
-    db.commit()
-    ok = failed = rows_raw = rows_new = rows_dup = 0
-
-    for src in items:
-        try:
-            rows = handler(src)
-        except Exception as exc:
-            failed += 1
-            _log_error(db, run_id, str(src), getattr(exc, "stage", "parse"), exc)
-            continue
-        try:
-            new, dup = _store_rows(db, run_id, rows)
-        except Exception as exc:
-            failed += 1
-            db.rollback()
-            _log_error(db, run_id, str(src), "store", exc)
-            continue
-        ok += 1
-        rows_raw += len(rows); rows_new += new; rows_dup += dup
-        run.sources_ok = ok; run.sources_failed = failed
-        run.rows_raw = rows_raw; run.rows_new = rows_new; run.rows_dup = rows_dup
+        run.sources_total = len(items)
         db.commit()
+        _log(db, run_id, f"источников к обработке: {len(items)}", stage="run")
+        ok = failed = rows_raw = rows_new = rows_dup = 0
 
-    run.sources_ok = ok
-    run.sources_failed = failed
-    run.rows_raw = rows_raw
-    run.rows_new = rows_new
-    run.rows_dup = rows_dup
-    run.status = "done"
-    run.finished_at = dt.datetime.now(dt.timezone.utc)
-    run.note = f"источников: ok={ok}, ошибок={failed}; строк: {rows_raw} (новых {rows_new}, дублей {rows_dup})"
-    db.commit()
-    print(run.note, flush=True)
+        for src in items:
+            try:
+                rows = handler(src)
+            except Exception as exc:
+                failed += 1
+                _log_error(db, run_id, str(src), getattr(exc, "stage", "parse"), exc)
+                continue
+            try:
+                new, dup = _store_rows(db, run_id, rows)
+            except Exception as exc:
+                failed += 1
+                db.rollback()
+                _log_error(db, run_id, str(src), "store", exc)
+                continue
+            ok += 1
+            rows_raw += len(rows); rows_new += new; rows_dup += dup
+            run.sources_ok = ok; run.sources_failed = failed
+            run.rows_raw = rows_raw; run.rows_new = rows_new; run.rows_dup = rows_dup
+            db.commit()
+            _log(db, run_id, f"ок: строк {len(rows)} (новых {new}, дублей {dup})",
+                 source=str(src), stage="store")
+
+        run.sources_ok = ok
+        run.sources_failed = failed
+        run.rows_raw = rows_raw
+        run.rows_new = rows_new
+        run.rows_dup = rows_dup
+        run.status = "done"
+        run.finished_at = dt.datetime.now(dt.timezone.utc)
+        run.note = f"источников: ok={ok}, ошибок={failed}; строк: {rows_raw} (новых {rows_new}, дублей {rows_dup})"
+        db.commit()
+        _log(db, run_id, "прогон завершён: " + run.note, stage="run")
+    except SystemExit:
+        raise
+    except Exception as exc:
+        # любая непредвиденная ошибка прогона — фиксируем как failed, а не «висящий running»
+        db.rollback()
+        run.status = "failed"
+        run.finished_at = dt.datetime.now(dt.timezone.utc)
+        run.note = f"прогон прерван ошибкой: {exc}"
+        db.commit()
+        _log(db, run_id, str(exc), level="error", stage="run")
+        db.close()
+        raise
     db.close()
     return run_id
 

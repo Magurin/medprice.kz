@@ -63,6 +63,38 @@ class ParseError(OpsBase):
     created_at = Column(DateTime, server_default=func.now())
 
 
+class ParseRunLog(OpsBase):
+    """Подробный хронологический лог одного прогона (ТЗ §3.1: журналирование).
+    В отличие от parse_errors (только ошибки) — пишет весь ход прогона:
+    старт, результат по каждому источнику, финал. Это и есть «подробные логи»
+    в админке. Имя таблицы parse_run_logs, чтобы не путать с legacy models.ParseLog."""
+    __tablename__ = "parse_run_logs"
+    id = Column(Integer, primary_key=True)
+    run_id = Column(Integer, ForeignKey("parse_runs.id"), index=True)
+    ts = Column(DateTime, server_default=func.now(), index=True)
+    level = Column(String, default="info")   # info | warn | error
+    source = Column(String)                   # хост / файл (опц.)
+    stage = Column(String)                    # run | fetch | parse | store (опц.)
+    message = Column(Text)
+
+
+class ParseSchedule(OpsBase):
+    """Расписание ежедневного парсинга, редактируемое из админки (ТЗ §3.1).
+    Singleton (id=1). Время хранится в UTC; workflow на GitHub Actions запускается
+    часто (каждые 30 мин) и сверяется с этой записью через app.scheduling (gate):
+    парсит только в выбранный час:минуту. Так время можно менять из UI без правки
+    cron в .github/workflows/parser.yml."""
+    __tablename__ = "parse_schedule"
+    id = Column(Integer, primary_key=True)
+    enabled = Column(Boolean, default=True)
+    hour = Column(Integer, default=2)         # UTC, 0..23
+    minute = Column(Integer, default=30)      # UTC, 0..59
+    kind = Column(String, default="web")      # web | file (что парсить по расписанию)
+    run_limit = Column(Integer, default=200)  # лимит хостов за прогон (web)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    updated_by = Column(String)
+
+
 class LearnedMatch(OpsBase):
     """Ручная привязка модератора (ТЗ §3.2): нормализованное raw-название -> услуга.
     Живёт отдельно от витрины, чтобы переживать пересборку. service_code NULL = «не услуга»."""
