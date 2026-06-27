@@ -13,9 +13,14 @@ ingest.py — превращает «сырьё» харвестера в нор
 клиниках — к имени добавляется улица из street: «Гемотест, ул. Ауэзова, 11».
 Так в выдаче не бывает безликих «Invitro 6», а одинаковые названия различимы.
 
-Вставка — через SQLAlchemy Core (executemany), движок-агностично: работает и на
-Postgres-пулере Supabase, и локально. (Раньше тут был сырой SQLite-курсор с `?`
-и PRAGMA — на Postgres он падал, а в CI ошибка глоталась `|| echo`.)
+Запись — ТОЛЬКО DML (роль `loader` не владелец таблиц и не имеет DDL/CREATE,
+только RLS-политику FOR ALL USING(true); поэтому никаких drop_all/create_all/TRUNCATE):
+  • cities/clinics/services — UPSERT по естественному ключу (name/host/code).
+    Существующие id сохраняются → FK из subscriptions/price_history не рвутся,
+    обогащение клиник (2ГИС-рейтинг, гео) тоже сохраняется (его колонки апдейт не трогает).
+  • price_offers — DELETE + повторная вставка (на них нет входящих FK).
+(Раньше тут был SQLite-курсор `?`/PRAGMA + drop_all — падал на Postgres, а в CI
+ошибка глоталась `|| echo`.)
 
 Запуск:  python -m app.ingest   (DATABASE_URL -> session pooler :5432)
 """
@@ -24,9 +29,10 @@ import os
 from collections import defaultdict, Counter
 
 from sqlalchemy import insert, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from .database import Base, engine
-from . import models  # noqa: F401  (регистрирует таблицы в Base.metadata)
+from .database import engine
+from . import models
 from .normalize import Matcher
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -64,39 +70,42 @@ def _display_name(c: dict, shared: bool) -> str:
     return brand or c.get("host", "")
 
 
-# Поля обогащения (2ГИС-рейтинги enrich_2gis.py + гео geocode.py) живут НЕ в харвесте.
-# При полной пересборке (drop_all) их надо сохранить по host, иначе карта/рейтинги
-# на сайте обнулятся до следующего прогона enrich/geocode (а geocode не в дневном CI).
-_ENRICH_COLS = [
-    "lat", "lng", "rating", "reviews_count",
-    "twogis_url", "twogis_id", "rating_updated_at",
-]
+# Поля обогащения (2ГИС-рейтинги enrich_2gis.py + гео geocode.py) пишутся отдельно.
+# При UPSERT их колонки в SET не входят -> у существующих клиник сохраняются сами собой,
+# у новых клиник остаются NULL до первого прогона enrich/geocode.
+_CLINIC_UPDATE = ["name", "city_id", "address", "source_url", "source_type",
+                  "phone", "working_hours"]
+_SERVICE_UPDATE = ["name", "category", "is_curated", "match_method", "n_offers", "n_clinics"]
 
 
-def _snapshot_enrichment() -> dict[str, dict]:
-    """host -> {обогащённые поля}. Пусто, если таблицы ещё нет (первый прогон)."""
-    cols = ", ".join(["host", *_ENRICH_COLS])
-    try:
-        with engine.connect() as conn:
-            rows = conn.execute(text(f"SELECT {cols} FROM clinics")).mappings().all()
-    except Exception:
-        return {}
-    return {r["host"]: {c: r[c] for c in _ENRICH_COLS} for r in rows if r.get("host")}
+def _chunks(seq, n):
+    for i in range(0, len(seq), n):
+        yield seq[i:i + n]
 
 
 def run():
-    enrichment = _snapshot_enrichment()
-    Base.metadata.drop_all(engine)
-    Base.metadata.create_all(engine)
     matcher = Matcher()
 
+    # --- существующие id (чтобы UPSERT сохранял их и не рвал FK) ---
+    with engine.connect() as conn:
+        ex_cities = {r.name: r.id for r in conn.execute(text("SELECT id, name FROM cities"))}
+        ex_clinics = {r.host: r.id for r in conn.execute(text("SELECT id, host FROM clinics"))}
+        ex_services = {r.code: r.id for r in conn.execute(text("SELECT id, code FROM services"))}
+    city_seq = max(ex_cities.values(), default=0)
+    clinic_seq = max(ex_clinics.values(), default=0)
+    service_seq = max(ex_services.values(), default=0)
+
     # --- города ---
-    cities: dict[str, int] = {}
+    cities: dict[str, int] = dict(ex_cities)
+    new_city_rows = []
 
     def city_id(name):
+        nonlocal city_seq
         name = (name or "Не указан").strip() or "Не указан"
         if name not in cities:
-            cities[name] = len(cities) + 1
+            city_seq += 1
+            cities[name] = city_seq
+            new_city_rows.append({"id": city_seq, "name": name})
         return cities[name]
 
     # --- клиники: дедуп по host + различение филиалов по улице ---
@@ -112,26 +121,28 @@ def run():
 
     host_to_id: dict[str, int] = {}
     clinic_rows = []
-    cid = 0
+    new_clinics = 0
     for c in clinic_recs:
-        cid += 1
-        host_to_id[c["host"]] = cid
+        host = c["host"]
+        if host in ex_clinics:
+            cid = ex_clinics[host]
+        else:
+            clinic_seq += 1
+            cid = clinic_seq
+            new_clinics += 1
+        host_to_id[host] = cid
         shared = brand_counts[_brand_key(c)] >= 2
-        row = {
+        clinic_rows.append({
             "id": cid,
-            "host": c["host"],
-            "name": _display_name(c, shared) or c["host"],
+            "host": host,
+            "name": _display_name(c, shared) or host,
             "city_id": city_id(c.get("city")),
             "address": c.get("address"),
             "source_url": c.get("source_url"),
             "source_type": "web",
             "phone": c.get("phone"),
             "working_hours": c.get("working_hours"),
-            **{col: None for col in _ENRICH_COLS},  # единый набор ключей для executemany
-        }
-        row.update(enrichment.get(c["host"], {}))  # вернуть сохранённые рейтинг/гео по host
-        clinic_rows.append(row)
-    city_rows = [{"id": i, "name": n} for n, i in cities.items()]
+        })
 
     # --- услуги + ценовые предложения (матчинг) ---
     svc: dict[str, tuple] = {}          # code -> (id, name, category, is_curated, method)
@@ -150,8 +161,12 @@ def run():
             continue
         code = m["code"]
         if code not in svc:
+            sid = ex_services.get(code)
+            if sid is None:
+                service_seq += 1
+                sid = service_seq
             is_cur = m["method"] in ("curated", "curated_fuzzy")
-            svc[code] = (len(svc) + 1, m["name"], m["category"], is_cur, m["method"])
+            svc[code] = (sid, m["name"], m["category"], is_cur, m["method"])
         sid = svc[code][0]
         oid += 1
         method_stats[m["method"]] += 1
@@ -181,24 +196,31 @@ def run():
         for code, (sid, name, cat, is_cur, meth) in svc.items()
     ]
 
-    # --- bulk insert (SQLAlchemy Core: работает на Postgres) ---
+    # --- запись: только DML (см. модульный docstring) ---
+    def _upsert(conn, table, rows, conflict, update_cols):
+        for batch in _chunks(rows, 500):
+            stmt = pg_insert(table).values(batch)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=[conflict],
+                set_={col: getattr(stmt.excluded, col) for col in update_cols},
+            )
+            conn.execute(stmt)
+
     with engine.begin() as conn:
-        if city_rows:
-            conn.execute(insert(models.City.__table__), city_rows)
-        if clinic_rows:
-            conn.execute(insert(models.Clinic.__table__), clinic_rows)
-        if service_rows:
-            conn.execute(insert(models.Service.__table__), service_rows)
-        # ценовых предложений много — режем на батчи
-        CHUNK = 1000
-        for i in range(0, len(offer_rows), CHUNK):
-            conn.execute(insert(models.PriceOffer.__table__), offer_rows[i:i + CHUNK])
+        if new_city_rows:
+            conn.execute(insert(models.City.__table__), new_city_rows)
+        _upsert(conn, models.Clinic.__table__, clinic_rows, "host", _CLINIC_UPDATE)
+        _upsert(conn, models.Service.__table__, service_rows, "code", _SERVICE_UPDATE)
+        # price_offers — без входящих FK: полностью пересобираем
+        conn.execute(text("DELETE FROM price_offers"))
+        for batch in _chunks(offer_rows, 1000):
+            conn.execute(insert(models.PriceOffer.__table__), batch)
 
     comparable = sum(1 for code, (sid, *_) in svc.items() if len(clinics_of[sid]) >= 2)
     chains = sum(1 for k, n in brand_counts.items() if n >= 2)
     print("=== INGEST DONE ===")
-    print(f"  города:    {len(city_rows)}")
-    print(f"  клиники:   {len(clinic_rows)}  (сетевых брендов с ≥2 филиалами: {chains})")
+    print(f"  города:    +{len(new_city_rows)} новых (всего {len(cities)})")
+    print(f"  клиники:   {len(clinic_rows)}  (+{new_clinics} новых; сетевых брендов с ≥2 филиалами: {chains})")
     print(f"  услуги:    {len(service_rows)}  (кураторских: {sum(r['is_curated'] for r in service_rows)})")
     print(f"  сравнимых услуг (>=2 клиник): {comparable}")
     print(f"  ценовых предложений: {len(offer_rows)}  (с ценой: {sum(priced_count.values())})")
