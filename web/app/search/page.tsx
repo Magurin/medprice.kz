@@ -115,7 +115,7 @@ function Results() {
             {([
               ["cheapest", "дешевле"],
               ["savings", "выгода"],
-              ["clinics", "клиник"],
+              ["clinics", "кол-во"],
             ] as [Sort, string][]).map(([key, label]) => (
               <button
                 key={key}
