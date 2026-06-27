@@ -41,8 +41,10 @@ _matcher = Matcher()  # live-матчинг для /api/ingest/match
 # ---------- схемы ----------
 class OfferOut(BaseModel):
     clinic: str
+    clinic_id: Optional[int] = None   # для ссылки на карточку клиники
     city: Optional[str]
     address: Optional[str]
+    working_hours: Optional[str] = None  # режим работы (ТЗ §3.3)
     raw_name: str
     price: int
     is_from: bool
@@ -51,6 +53,8 @@ class OfferOut(BaseModel):
     rating: Optional[float] = None
     reviews_count: Optional[int] = None
     twogis_url: Optional[str] = None
+    lat: Optional[float] = None       # для сортировки по расстоянию
+    lng: Optional[float] = None
     parsed_at: Optional[str] = None   # когда данные распарсены (актуальность)
     source_file: Optional[str] = None  # имя архивного файла (для source_type='file')
 
@@ -292,10 +296,12 @@ def compare(
     offers, updated = [], []
     for po, cl, ct in triples:
         offers.append(OfferOut(
-            clinic=cl.name, city=ct.name if ct else None, address=cl.address,
+            clinic=cl.name, clinic_id=cl.id, city=ct.name if ct else None, address=cl.address,
+            working_hours=cl.working_hours,
             raw_name=po.raw_name, price=po.price, is_from=bool(po.is_from),
             source_url=cl.source_url, source_type=po.source_type,
             rating=cl.rating, reviews_count=cl.reviews_count, twogis_url=cl.twogis_url,
+            lat=cl.lat, lng=cl.lng,
             parsed_at=po.parsed_at.isoformat() if po.parsed_at else None,
             source_file=file_map.get(cl.name) if po.source_type == "file" else None,
         ))

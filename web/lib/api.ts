@@ -65,8 +65,10 @@ export interface SearchResponse {
 
 export interface Offer {
   clinic: string;
+  clinic_id?: number | null;
   city: string | null;
   address: string | null;
+  working_hours?: string | null;
   raw_name: string;
   price: number;
   is_from: boolean;
@@ -74,9 +76,11 @@ export interface Offer {
   rating?: number | null;
   reviews_count?: number | null;
   twogis_url?: string | null;
-  source_type?: string | null;
+  lat?: number | null;
+  lng?: number | null;
   parsed_at?: string | null;
   source_file?: string | null;
+  source_type?: string | null;
 }
 
 export interface CompareStats {

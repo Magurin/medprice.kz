@@ -273,9 +273,25 @@ export default function ServicePage() {
                         parsedAt={o.parsed_at}
                       />
                     </div>
-                    <div className="mt-0.5 flex items-center gap-1.5 text-xs text-faint">
-                      <span className="shrink-0">{cityLabel(o.city)}</span>
-                      <span className="text-line2">·</span>
+                    {o.address && (
+                      <div className="mt-0.5 truncate text-xs text-muted" title={o.address}>
+                        {o.address}
+                      </div>
+                    )}
+                    <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-faint">
+                      {!o.address && <><span className="shrink-0">{cityLabel(o.city)}</span><span className="text-line2">·</span></>}
+                      {o.working_hours && (
+                        <>
+                          <span className="inline-flex shrink-0 items-center gap-1 text-faint">
+                            <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <circle cx="12" cy="12" r="9" />
+                              <path d="M12 7v5l3 2" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                            {o.working_hours}
+                          </span>
+                          <span className="text-line2">·</span>
+                        </>
+                      )}
                       <span className="truncate" title={o.raw_name}>{o.raw_name}</span>
                     </div>
                   </div>
