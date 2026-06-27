@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import { useBasket } from "@/lib/basket";
 import { useAuth } from "@/lib/auth";
 
@@ -11,6 +12,13 @@ export default function Header() {
   const pathname = usePathname();
   const basket = useBasket();
   const { user, username, email, signOut, loading, isStaff } = useAuth();
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  // закрываем мобильное меню при переходе на другую страницу
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [pathname]);
+
   // активна только ссылка с самым длинным совпадающим префиксом —
   // иначе на /clinics/list подсветились бы и «Карта» (/clinics), и «Клиники».
   const bestMatch = SECTION_LINKS.reduce<string | null>((best, l) => {
@@ -35,7 +43,8 @@ export default function Header() {
           </span>
         </Link>
 
-        <nav className="flex items-center gap-0.5 overflow-x-auto text-sm font-medium">
+        {/* десктоп-навигация */}
+        <nav className="hidden items-center gap-0.5 text-sm font-medium lg:flex">
           {SECTION_LINKS.map((l) => (
             <Link
               key={l.href}
@@ -102,7 +111,102 @@ export default function Header() {
             </div>
           )}
         </nav>
+
+        {/* бургер — только на мобилке/планшете */}
+        <button
+          onClick={() => setMenuOpen((v) => !v)}
+          aria-label={menuOpen ? "Закрыть меню" : "Открыть меню"}
+          aria-expanded={menuOpen}
+          className="relative grid h-10 w-10 place-items-center rounded-lg text-foreground hover:bg-surface2 lg:hidden"
+        >
+          <svg className="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            {menuOpen ? (
+              <path d="M6 6l12 12M18 6 6 18" />
+            ) : (
+              <path d="M3 6h18M3 12h18M3 18h18" />
+            )}
+          </svg>
+          {!menuOpen && basket.length > 0 && (
+            <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-brand" />
+          )}
+        </button>
       </div>
+
+      {/* мобильное меню */}
+      {menuOpen && (
+        <nav className="border-t border-line bg-surface px-4 py-3 text-sm font-medium lg:hidden">
+          <div className="flex flex-col gap-0.5">
+            {SECTION_LINKS.map((l) => (
+              <Link
+                key={l.href}
+                href={l.href}
+                className={`flex items-center justify-between rounded-lg px-3 py-2.5 transition-colors ${
+                  isActive(l.href)
+                    ? "bg-surface2 text-brand-ink"
+                    : "text-muted hover:bg-surface2 hover:text-foreground"
+                }`}
+              >
+                {l.label}
+                {l.href === "/compare" && basket.length > 0 && (
+                  <span className="grid h-5 min-w-5 place-items-center rounded-full bg-brand px-1 text-[11px] font-bold text-white">
+                    {basket.length}
+                  </span>
+                )}
+              </Link>
+            ))}
+
+            {isStaff && (
+              <Link
+                href="/admin"
+                className={`rounded-lg px-3 py-2.5 font-semibold transition-colors ${
+                  isActive("/admin") ? "bg-brand/10 text-brand-ink" : "text-brand hover:bg-brand/10"
+                }`}
+              >
+                Модерация
+              </Link>
+            )}
+          </div>
+
+          {!loading && (
+            <div className="mt-2 flex flex-col gap-0.5 border-t border-line pt-2">
+              {user ? (
+                <>
+                  <Link
+                    href="/subscriptions"
+                    className="truncate rounded-lg px-3 py-2.5 text-foreground hover:bg-surface2"
+                  >
+                    {who}
+                  </Link>
+                  <button
+                    onClick={() => {
+                      setMenuOpen(false);
+                      signOut();
+                    }}
+                    className="rounded-lg px-3 py-2.5 text-left text-muted hover:bg-surface2 hover:text-foreground"
+                  >
+                    Выйти
+                  </button>
+                </>
+              ) : (
+                <div className="flex gap-2">
+                  <Link
+                    href="/login"
+                    className="flex-1 rounded-lg border border-line px-3 py-2.5 text-center text-muted hover:bg-surface2"
+                  >
+                    Войти
+                  </Link>
+                  <Link
+                    href="/register"
+                    className="flex-1 rounded-lg bg-brand px-3 py-2.5 text-center font-semibold text-white hover:bg-brand/90"
+                  >
+                    Регистрация
+                  </Link>
+                </div>
+              )}
+            </div>
+          )}
+        </nav>
+      )}
     </header>
   );
 }
