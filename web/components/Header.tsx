@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
 import { useBasket } from "@/lib/basket";
 import { useAuth } from "@/lib/auth";
 
@@ -11,6 +12,24 @@ export default function Header() {
   const pathname = usePathname();
   const basket = useBasket();
   const { user, username, email, signOut, loading, isStaff } = useAuth();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // закрываем меню профиля по клику вне и при смене маршрута
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [menuOpen]);
+
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [pathname]);
   const isActive = (href: string) =>
     href === "/" ? pathname === "/" : pathname.startsWith(href);
   const who = username || email?.split("@")[0] || "аккаунт";
@@ -67,22 +86,50 @@ export default function Header() {
           {!loading && (
             <div className="ml-1 flex shrink-0 items-center gap-1.5 border-l border-line pl-2">
               {user ? (
-                <>
-                  <Link
-                    href="/subscriptions"
-                    className="max-w-[120px] truncate rounded-lg px-2.5 py-2 text-foreground hover:bg-surface2"
-                    title={email || undefined}
-                  >
-                    {who}
-                  </Link>
+                <div className="relative" ref={menuRef}>
                   <button
-                    onClick={() => signOut()}
-                    className="rounded-lg px-2.5 py-2 text-muted hover:bg-surface2 hover:text-foreground"
-                    title="Выйти"
+                    onClick={() => setMenuOpen((v) => !v)}
+                    className="flex max-w-[140px] items-center gap-1 truncate rounded-lg px-2.5 py-2 text-foreground hover:bg-surface2"
+                    title={email || undefined}
+                    aria-haspopup="menu"
+                    aria-expanded={menuOpen}
                   >
-                    Выйти
+                    <span className="truncate">{who}</span>
+                    <svg
+                      className={`h-3.5 w-3.5 shrink-0 transition-transform ${menuOpen ? "rotate-180" : ""}`}
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                    >
+                      <path d="M6 9l6 6 6-6" />
+                    </svg>
                   </button>
-                </>
+                  {menuOpen && (
+                    <div
+                      role="menu"
+                      className="absolute right-0 top-full mt-1.5 w-44 overflow-hidden rounded-xl border border-line bg-surface py-1 shadow-[0_18px_50px_-20px_rgba(12,24,34,0.35)]"
+                    >
+                      <Link
+                        href="/subscriptions"
+                        role="menuitem"
+                        className="block px-3.5 py-2 text-foreground hover:bg-surface2"
+                      >
+                        Подписки
+                      </Link>
+                      <button
+                        onClick={() => {
+                          setMenuOpen(false);
+                          signOut();
+                        }}
+                        role="menuitem"
+                        className="block w-full px-3.5 py-2 text-left text-muted hover:bg-surface2 hover:text-foreground"
+                      >
+                        Выйти
+                      </button>
+                    </div>
+                  )}
+                </div>
               ) : (
                 <>
                   <Link href="/login" className="rounded-lg px-3 py-2 text-muted hover:bg-surface2 hover:text-foreground">

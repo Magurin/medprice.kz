@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api, CityRow, MatchResult, tenge } from "@/lib/api";
+import CityPicker from "@/components/CityPicker";
 
 const SAMPLE = `Клинический анализ крови (с лейкоцитарной формулой); 2500
 ТТГ ультрачувствительный; 1500
@@ -79,22 +80,14 @@ export default function PriceCheckPage() {
           className="w-full resize-y rounded-xl border border-line2 bg-surface2 p-3.5 font-mono text-sm text-foreground outline-none transition-colors focus:border-brand focus:bg-surface"
         />
         <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div className="relative">
-            <select
+          <div className="w-full sm:w-56">
+            <CityPicker
               value={city}
-              onChange={(e) => setCity(e.target.value)}
-              className="h-11 w-full cursor-pointer appearance-none rounded-xl border border-line2 bg-surface pl-3.5 pr-9 text-sm text-foreground outline-none focus:border-brand sm:w-56"
-            >
-              <option value="">Сравнить со всем рынком</option>
-              {cities.map((c) => (
-                <option key={c.city} value={c.city}>
-                  {c.city}
-                </option>
-              ))}
-            </select>
-            <svg className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-faint" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
+              cities={cities}
+              onChange={setCity}
+              size="sm"
+              placeholder="Сравнить со всем рынком"
+            />
           </div>
           <button
             onClick={run}
