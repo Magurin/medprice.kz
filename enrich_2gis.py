@@ -112,7 +112,11 @@ def call(params: dict):
 
 
 def best_match(clinic_name, city, lat, lng):
-    """Возвращает (rating, reviews, url) или None."""
+    """Возвращает dict(rating, reviews, id, lat, lng) или None.
+
+    Координаты 2ГИС (point) точны для адресов РК (микрорайоны, литеры домов),
+    где Nominatim почти всегда промахивается — поэтому геокодим заодно с рейтингом.
+    """
     candidates = []
     q = " ".join(filter(None, [deslug(clinic_name), city]))
     candidates += call({"q": q})
@@ -139,9 +143,15 @@ def best_match(clinic_name, city, lat, lng):
         return None
     rv = best.get("reviews") or {}
     rating = rv.get("general_rating")
-    if rating is None:
-        return None
-    return (float(rating), int(rv.get("general_review_count") or 0), best.get("id"))
+    pt = best.get("point") or {}
+    # рейтинг может отсутствовать, но координаты/id у совпавшей организации есть
+    return {
+        "rating": float(rating) if rating is not None else None,
+        "reviews": int(rv.get("general_review_count") or 0) if rating is not None else None,
+        "id": best.get("id"),
+        "lat": pt.get("lat"),
+        "lng": pt.get("lon"),
+    }
 
 
 def main():
@@ -168,7 +178,7 @@ def main():
 
         # ---- фаза 2: рейтинг + число отзывов (ключ); дневной рефреш ----
         cutoff = now - dt.timedelta(hours=REFRESH_HOURS)
-        done = ok = 0
+        done = ok = geo = 0
         remaining = LIMIT
         for city in PRIORITY + [None]:
             if remaining <= 0:
@@ -192,22 +202,34 @@ def main():
                 m = best_match(cname, ccity, lat, lng)
                 done += 1
                 remaining -= 1
-                rating, reviews, fid = m if m else (None, None, None)
+                rating = m["rating"] if m else None
+                reviews = m["reviews"] if m else None
+                fid = m["id"] if m else None
+                mlat = m["lat"] if m else None
+                mlng = m["lng"] if m else None
+                # координаты 2ГИС точнее — перезаписываем, если пришли; иначе храним прежние
                 cur.execute(
                     "UPDATE clinics SET rating=%s, reviews_count=%s, twogis_id=%s, "
-                    "twogis_url=%s, rating_updated_at=%s WHERE id=%s",
-                    (rating, reviews, fid, review_link(cname, ccity, fid), now, cid))
+                    "twogis_url=%s, lat=COALESCE(%s, lat), lng=COALESCE(%s, lng), "
+                    "rating_updated_at=%s WHERE id=%s",
+                    (rating, reviews, fid, review_link(cname, ccity, fid),
+                     mlat, mlng, now, cid))
                 conn.commit()
                 if rating is not None:
                     ok += 1
+                if mlat is not None:
+                    geo += 1
                 if done % 25 == 0:
-                    print(f"  {done} обработано, {ok} с рейтингом", flush=True)
+                    print(f"  {done} обработано, {ok} с рейтингом, {geo} с координатами", flush=True)
                 time.sleep(1.2)  # бережём демо-ключ от блокировки
                 if remaining <= 0:
                     break
         cur.execute("SELECT count(*) FROM clinics WHERE rating IS NOT NULL")
         total = cur.fetchone()[0]
-    print(f"=== ГОТОВО: обработано {done}, с рейтингом {ok}; всего с рейтингом в БД: {total} ===")
+        cur.execute("SELECT count(*) FROM clinics WHERE lat IS NOT NULL")
+        total_geo = cur.fetchone()[0]
+    print(f"=== ГОТОВО: обработано {done}, с рейтингом {ok} (+{geo} координат); "
+          f"в БД с рейтингом {total}, с координатами {total_geo} ===")
 
 
 if __name__ == "__main__":
