@@ -258,7 +258,9 @@ export default async function Home() {
                   className="group flex items-center justify-between rounded-xl border border-line bg-surface px-4 py-3.5 transition-colors hover:border-brand/40 hover:bg-surface2"
                 >
                   <span className="min-w-0">
-                    <span className="block truncate font-medium text-foreground">{c.category}</span>
+                    <span className="block truncate font-medium text-foreground">
+                      {c.category === "Прочее" ? "Все услуги" : c.category}
+                    </span>
                     <span className="text-xs text-faint">{c.services} услуг</span>
                   </span>
                   <svg className="h-4 w-4 shrink-0 text-line2 transition-colors group-hover:text-brand" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

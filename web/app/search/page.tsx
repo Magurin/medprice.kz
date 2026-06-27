@@ -95,7 +95,8 @@ function Results() {
     return sb - sa;
   });
 
-  const title = q ? `«${q}»` : category ? category : "Поиск услуг";
+  const categoryLabel = category === "Прочее" ? "Все услуги" : category;
+  const title = q ? `«${q}»` : category ? categoryLabel : "Поиск услуг";
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-7">
