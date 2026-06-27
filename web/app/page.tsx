@@ -168,7 +168,7 @@ export default async function Home() {
   return (
     <div>
       {/* HERO */}
-      <section className="relative overflow-hidden border-b border-line">
+      <section className="relative overflow-x-clip border-b border-line">
         <div
           className="pointer-events-none absolute inset-0 -z-10"
           style={{
