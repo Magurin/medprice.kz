@@ -467,7 +467,7 @@ export default function ServicePage() {
                       </span>
                     )}
                     <span className={`text-base font-bold tabular-nums ${cheapest ? "text-deal" : "text-foreground"}`}>
-                      {o.is_from && <span className="mr-0.5 text-xs font-normal text-faint">от</span>}
+                      {o.is_from && <span className="mr-1.5 text-xs font-normal text-faint">от</span>}
                       {tenge(o.price)}
                     </span>
                   </div>
