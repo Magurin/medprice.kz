@@ -28,7 +28,10 @@ if [ "$mode" = "now" ]; then
   kind="${2:-web}"
   limit="${3:-200}"
   echo "parser-run: ручной запуск kind=$kind limit=$limit"
-  exec "$PY" -X utf8 -m app.parser --kind "$kind" --limit "$limit" --trigger dispatch
+  "$PY" -X utf8 -m app.parser --kind "$kind" --limit "$limit" --trigger dispatch
+  echo "parser-run: ingest витрины…"
+  "$PY" -X utf8 -m app.ingest || echo "parser-run: ingest пропущен/ошибка"
+  exit 0
 fi
 
 # Режим по расписанию: спросить гейт, что и нужно ли запускать сейчас.
@@ -39,6 +42,9 @@ limit=$(printf '%s\n' "$gate" | sed -n 's/^limit=//p' | tail -1)
 echo "parser-run: гейт -> run=${run:-?} kind=${kind:-?} limit=${limit:-?}"
 
 if [ "$run" = "true" ]; then
-  exec "$PY" -X utf8 -m app.parser --kind "${kind:-web}" --limit "${limit:-200}" --trigger cron
+  "$PY" -X utf8 -m app.parser --kind "${kind:-web}" --limit "${limit:-200}" --trigger cron
+  echo "parser-run: ingest витрины…"
+  "$PY" -X utf8 -m app.ingest || echo "parser-run: ingest пропущен/ошибка"
+  exit 0
 fi
 echo "parser-run: вне окна расписания — пропуск"

@@ -578,18 +578,23 @@ def _spawn_local_parse(body: ParseRunBody) -> None:
     в Supabase. Теперь БД локальна на VM и раннеру недоступна — поэтому парсер
     запускается здесь же, тем самым интерпретатором venv, что и бэкенд. Процесс
     отвязывается (start_new_session) и переживает HTTP-запрос; свой ParseRun он
-    заводит сам, прогресс виден в админке через /api/admin/parse."""
+    заводит сам, прогресс виден в админке через /api/admin/parse. После сбора сразу
+    гоним app.ingest — чтобы собранные цены попали в витрину (для web-источников;
+    ingest безопасен: точечная пересборка только затронутых клиник)."""
     py = _os.environ.get("PARSER_PYTHON") or _sys.executable
     root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
-    cmd = [py, "-X", "utf8", "-m", "app.parser",
-           "--kind", body.kind,
-           "--limit", str(body.limit or 50),
-           "--hosts", body.hosts or "",
-           "--paths", body.paths or "",
-           "--trigger", "dispatch"]
+    import shlex as _shlex
+    parse_cmd = " ".join(_shlex.quote(a) for a in [
+        py, "-X", "utf8", "-m", "app.parser",
+        "--kind", body.kind, "--limit", str(body.limit or 50),
+        "--hosts", body.hosts or "", "--paths", body.paths or "",
+        "--trigger", "dispatch"])
+    ingest_cmd = " ".join(_shlex.quote(a) for a in [py, "-X", "utf8", "-m", "app.ingest"])
+    # ingest имеет смысл для web (file-источники витрину так не пересобирают)
+    full = parse_cmd + (f" && {ingest_cmd}" if body.kind == "web" else "")
     try:
         _subprocess.Popen(
-            cmd, cwd=root,
+            ["/bin/bash", "-lc", full], cwd=root,
             stdout=_subprocess.DEVNULL, stderr=_subprocess.DEVNULL,
             start_new_session=True,
         )
