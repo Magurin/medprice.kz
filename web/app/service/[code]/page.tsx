@@ -266,11 +266,15 @@ export default function ServicePage() {
           {/* ИСТОРИЯ ЦЕН */}
           {history && (
             <div className="mt-5 rounded-2xl border border-line bg-surface p-5 sm:p-6">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <h2 className="text-sm font-semibold uppercase tracking-wide text-faint">
-                  Динамика цены по годам
+                  Динамика цены
                 </h2>
-                <span className="text-xs text-faint">из архивных прайсов клиник</span>
+                <span className="text-xs text-faint">
+                  {history.total_clinics && history.shown_clinics && history.total_clinics > history.shown_clinics
+                    ? `топ-${history.shown_clinics} из ${history.total_clinics} клиник`
+                    : "история изменения цен"}
+                </span>
               </div>
               <div className="mt-3">
                 <PriceHistoryChart data={history} />

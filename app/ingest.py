@@ -256,6 +256,27 @@ def run():
             ) a
             WHERE s.id = a.service_id
         """))
+        # История изменения цен: фиксируем точку для пары клиника+услуга ТОЛЬКО если
+        # цена изменилась относительно последней записанной — лента растёт изменениями,
+        # а не дублями. На пустой price_history первый прогон создаёт базовый срез.
+        conn.execute(text("""
+            WITH cur AS (
+                -- одна цена на пару клиника+услуга = минимум по её прайсу (как «дешевле всего»)
+                SELECT clinic_id, service_id, MIN(price) AS price
+                FROM price_offers WHERE price IS NOT NULL
+                GROUP BY clinic_id, service_id
+            ),
+            latest AS (
+                SELECT DISTINCT ON (clinic_id, service_id) clinic_id, service_id, price
+                FROM price_history
+                ORDER BY clinic_id, service_id, recorded_at DESC, id DESC
+            )
+            INSERT INTO price_history (clinic_id, service_id, price, recorded_at, source_file)
+            SELECT cur.clinic_id, cur.service_id, cur.price, :now, 'snapshot'
+            FROM cur
+            LEFT JOIN latest l ON l.clinic_id = cur.clinic_id AND l.service_id = cur.service_id
+            WHERE l.price IS NULL OR l.price <> cur.price
+        """), {"now": now})
 
     comparable = sum(1 for code, (sid, *_) in svc.items() if len(clinics_of[sid]) >= 2)
     chains = sum(1 for k, n in brand_counts.items() if n >= 2)

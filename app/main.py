@@ -887,6 +887,22 @@ def _slug_host(name: str) -> str:
     return base.strip("-") or "manual-clinic"
 
 
+def _record_price_point(db, clinic_id, service_id, price, raw_name=None, source="manual"):
+    """Точка истории изменения цены — пишем, только если цена отличается от последней
+    записанной для пары клиника+услуга (см. также срез в app/ingest.py)."""
+    if price is None or clinic_id is None or service_id is None:
+        return
+    last = (db.query(PriceHistory.price)
+            .filter(PriceHistory.clinic_id == clinic_id,
+                    PriceHistory.service_id == service_id)
+            .order_by(PriceHistory.recorded_at.desc(), PriceHistory.id.desc()).first())
+    if last and last[0] == price:
+        return
+    db.add(PriceHistory(clinic_id=clinic_id, service_id=service_id, price=price,
+                        recorded_at=dt.datetime.now(dt.timezone.utc),
+                        raw_name=raw_name, source_file=source))
+
+
 def _ensure_city(db, name):
     name = (name or "").strip()
     if not name:
@@ -1158,6 +1174,7 @@ def admin_offer_create(body: OfferCreate, staff: dict = Depends(verify_staff),
         parsed_at=dt.datetime.now(dt.timezone.utc), is_active=True,
     )
     db.add(o)
+    _record_price_point(db, c.id, svc.id, body.price, raw, "manual")
     db.commit()
     _refresh_service_counts(db, svc.id)
     db.commit()
@@ -1194,6 +1211,8 @@ def admin_offer_patch(offer_id: int, body: OfferPatch,
         if not svc:
             raise HTTPException(404, "Услуга с таким кодом не найдена")
         o.service_id = svc.id
+    if body.price is not None:
+        _record_price_point(db, o.clinic_id, o.service_id, o.price, o.raw_name, "manual")
     db.commit()
     if o.service_id != old_sid:
         _refresh_service_counts(db, old_sid)
@@ -1366,6 +1385,7 @@ def admin_import_commit(body: ImportCommit, staff: dict = Depends(verify_staff),
             currency="KZT", on_request=(row.price is None), match_method="import",
             match_score=1.0, source_type="file", parsed_at=now, is_active=True,
         ))
+        _record_price_point(db, c.id, svc.id, row.price, raw, body.source or "import")
         created += 1
         affected.add(svc.id)
         # запоминаем решение (переживает пересборку витрины)
@@ -1456,7 +1476,9 @@ def _service_current_price(db, service_id, clinic_id=None, city=None):
 
 @app.get("/api/services/{code}/history")
 def service_history(code: str, db: Session = Depends(get_db)):
-    """Динамика цены услуги по клиникам и годам (из архивных прайсов price_history)."""
+    """Динамика цены услуги по клиникам и датам (лента изменений из price_history).
+    На услугу может приходиться много клиник — отдаём топ-8 по числу точек истории
+    (клиники с трендом ≥2 точек приоритетнее), чтобы график оставался читаемым."""
     s = db.query(Service).filter(Service.code == code).first()
     if not s:
         raise HTTPException(404, "Услуга не найдена")
@@ -1471,9 +1493,15 @@ def service_history(code: str, db: Session = Depends(get_db)):
         d = by_clinic.setdefault(cl.id, {"clinic_id": cl.id, "clinic": cl.name, "points": []})
         d["points"].append({"date": ph.recorded_at.date().isoformat(),
                             "year": ph.recorded_at.year, "price": ph.price})
-    series = sorted(by_clinic.values(), key=lambda x: x["clinic"])
+    all_series = list(by_clinic.values())
+    total_clinics = len(all_series)
+    # приоритет: больше точек = виднее тренд; затем по названию
+    all_series.sort(key=lambda x: (-len(x["points"]), x["clinic"]))
+    series = all_series[:8]
+    series.sort(key=lambda x: x["clinic"])
     years = sorted({p["year"] for s_ in series for p in s_["points"]})
-    return {"code": s.code, "name": s.name, "years": years, "series": series}
+    return {"code": s.code, "name": s.name, "years": years, "series": series,
+            "total_clinics": total_clinics, "shown_clinics": len(series)}
 
 
 # ---------- сравнение «корзины» услуг по клиникам (фича 2) ----------

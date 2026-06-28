@@ -14,8 +14,6 @@ export default function PriceHistoryChart({ data }: { data: HistoryResponse }) {
   const [hidden, setHidden] = useState<Set<number>>(new Set());
 
   const model = useMemo(() => {
-    const years = data.years;
-    if (years.length === 0) return null;
     const allPrices = data.series.flatMap((s) => s.points.map((p) => p.price));
     if (allPrices.length === 0) return null;
     const minP = Math.min(...allPrices);
@@ -25,16 +23,33 @@ export default function PriceHistoryChart({ data }: { data: HistoryResponse }) {
     const lo = Math.max(0, minP - span * 0.15);
     const hi = maxP + span * 0.15;
 
-    const minYear = Math.min(...years);
-    const maxYear = Math.max(...years);
-    const yearSpan = maxYear - minYear || 1;
+    // ось X — по реальным датам (внутригодовые изменения тоже видны)
+    const t = (iso: string) => new Date(iso).getTime();
+    const times = data.series.flatMap((s) => s.points.map((p) => t(p.date)));
+    const minT = Math.min(...times);
+    const maxT = Math.max(...times);
+    const tSpan = maxT - minT || 1;
 
-    const x = (year: number) =>
-      PAD.left + ((year - minYear) / yearSpan) * (W - PAD.left - PAD.right);
+    const x = (iso: string) =>
+      PAD.left + ((t(iso) - minT) / tSpan) * (W - PAD.left - PAD.right);
     const y = (price: number) =>
       PAD.top + (1 - (price - lo) / (hi - lo)) * (H - PAD.top - PAD.bottom);
 
-    return { years, minYear, maxYear, lo, hi, x, y };
+    // подписи X: 4 равномерных отметки по времени; формат зависит от охвата
+    const overYear = maxT - minT > 400 * 86400_000;
+    const fmt = (ms: number) =>
+      new Date(ms).toLocaleDateString("ru-RU", overYear
+        ? { year: "numeric" }
+        : { day: "2-digit", month: "short" });
+    const xTicks = (minT === maxT
+      ? [minT]
+      : Array.from({ length: 4 }, (_, i) => minT + (tSpan * i) / 3)
+    ).map((ms) => ({
+      label: fmt(ms),
+      px: PAD.left + ((ms - minT) / tSpan) * (W - PAD.left - PAD.right),
+    }));
+
+    return { lo, hi, x, y, xTicks };
   }, [data]);
 
   if (!model) return null;
@@ -67,24 +82,24 @@ export default function PriceHistoryChart({ data }: { data: HistoryResponse }) {
             </g>
           );
         })}
-        {/* подписи X (годы) */}
-        {model.years.map((yr) => (
-          <text key={yr} x={model.x(yr)} y={H - 8} textAnchor="middle" fontSize="11" fill="#94a3b8">
-            {yr}
+        {/* подписи X (даты) */}
+        {model.xTicks.map((tk, i) => (
+          <text key={i} x={tk.px} y={H - 8} textAnchor="middle" fontSize="11" fill="#94a3b8">
+            {tk.label}
           </text>
         ))}
         {/* линии по клиникам */}
         {data.series.map((s, i) => {
           if (hidden.has(s.clinic_id) || s.points.length === 0) return null;
           const color = COLORS[i % COLORS.length];
-          const pts = [...s.points].sort((a, b) => a.year - b.year);
-          const d = pts.map((p, j) => `${j === 0 ? "M" : "L"} ${model.x(p.year)} ${model.y(p.price)}`).join(" ");
+          const pts = [...s.points].sort((a, b) => +new Date(a.date) - +new Date(b.date));
+          const d = pts.map((p, j) => `${j === 0 ? "M" : "L"} ${model.x(p.date)} ${model.y(p.price)}`).join(" ");
           return (
             <g key={s.clinic_id}>
               {pts.length > 1 && <path d={d} fill="none" stroke={color} strokeWidth="2" />}
               {pts.map((p, j) => (
-                <circle key={j} cx={model.x(p.year)} cy={model.y(p.price)} r="3.5" fill={color}>
-                  <title>{`${s.clinic} · ${p.year}: ${tenge(p.price)}`}</title>
+                <circle key={j} cx={model.x(p.date)} cy={model.y(p.price)} r="3.5" fill={color}>
+                  <title>{`${s.clinic} · ${new Date(p.date).toLocaleDateString("ru-RU")}: ${tenge(p.price)}`}</title>
                 </circle>
               ))}
             </g>

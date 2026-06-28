@@ -154,6 +154,8 @@ export interface HistoryResponse {
   name: string;
   years: number[];
   series: HistorySeries[];
+  total_clinics?: number;
+  shown_clinics?: number;
 }
 
 export interface BasketClinic {
