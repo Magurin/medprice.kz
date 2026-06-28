@@ -218,7 +218,7 @@ export default function ServicePage() {
             <div className="flex flex-wrap items-end justify-between gap-4">
               <div>
                 <div className="text-xs uppercase tracking-wide text-faint">дешевле всего</div>
-                <div className="mt-0.5 text-3xl font-bold tabular-nums text-deal">{tenge(data.stats.min)}</div>
+                <div className="mt-0.5 text-2xl font-bold tabular-nums text-deal sm:text-[28px]">{tenge(data.stats.min)}</div>
               </div>
               <div className="flex gap-6 text-right">
                 <div>
@@ -388,7 +388,7 @@ export default function ServicePage() {
                     {i + 1}
                   </span>
 
-                  <div className="min-w-0 flex-1">
+                  <div className="min-w-0 flex-1 overflow-hidden">
                     <div className="flex items-center gap-2">
                       {o.clinic_id ? (
                         <Link
@@ -426,7 +426,7 @@ export default function ServicePage() {
                         {o.address}
                       </div>
                     )}
-                    <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-faint">
+                    <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-faint">
                       {userLoc && o.lat != null && o.lng != null && (
                         <>
                           <span className="inline-flex shrink-0 items-center gap-1 font-medium text-brand-ink">
@@ -442,12 +442,12 @@ export default function ServicePage() {
                       {!o.address && <><span className="shrink-0">{cityLabel(o.city)}</span><span className="text-line2">·</span></>}
                       {o.working_hours && (
                         <>
-                          <span className="inline-flex shrink-0 items-center gap-1 text-faint">
-                            <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <span className="inline-flex min-w-0 max-w-full items-center gap-1 text-faint">
+                            <svg className="h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                               <circle cx="12" cy="12" r="9" />
                               <path d="M12 7v5l3 2" strokeLinecap="round" strokeLinejoin="round" />
                             </svg>
-                            {o.working_hours}
+                            <span className="truncate">{o.working_hours}</span>
                           </span>
                           <span className="text-line2">·</span>
                         </>

@@ -5,18 +5,11 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/lib/auth";
+import { ADMIN_LINKS } from "@/lib/site-nav";
 
 // Клиентский гейт: вход в админку только для staff.
 // Это «забор» UI - реальную защиту данных делает бэкенд (verify_staff на ручках),
 // потому что FastAPI ходит в БД мимо RLS. Здесь просто не пускаем и прячем.
-const ADMIN_LINKS = [
-  { href: "/admin", label: "Обзор" },
-  { href: "/admin/clinics", label: "Клиники" },
-  { href: "/admin/import", label: "Импорт прайса" },
-  { href: "/admin/parser", label: "Парсер" },
-  { href: "/admin/sources", label: "Источники" },
-  { href: "/admin/queue", label: "Очередь разметки" },
-];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const { loading, isStaff, role, email } = useAuth();
@@ -49,7 +42,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             {email} · роль: <span className="font-medium text-brand-ink">{role}</span>
           </p>
         </div>
-        <nav className="flex items-center gap-1 text-sm font-medium">
+        {/* На мобилке подразделы уезжают за экран — там они живут в бургер-меню хедера. */}
+        <nav className="hidden items-center gap-1 text-sm font-medium lg:flex">
           {ADMIN_LINKS.map((l) => {
             const active = l.href === "/admin" ? pathname === "/admin" : pathname.startsWith(l.href);
             return (

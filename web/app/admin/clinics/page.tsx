@@ -424,7 +424,7 @@ export default function ClinicsAdminPage() {
           <div className="divide-y divide-line">
             {items.map((c) => (
               <div key={c.id}>
-                <div className="grid grid-cols-[1fr_auto] items-center gap-3 px-5 py-3">
+                <div className="flex flex-col gap-2 px-4 py-3 sm:grid sm:grid-cols-[1fr_auto] sm:items-center sm:gap-3 sm:px-5">
                   <div className="min-w-0">
                     <span className="block truncate text-sm font-medium text-foreground">
                       {c.name}
@@ -434,12 +434,12 @@ export default function ClinicsAdminPage() {
                         </span>
                       )}
                     </span>
-                    <span className="text-xs text-faint">
+                    <span className="block truncate text-xs text-faint">
                       {c.city || "город не указан"}
                       {c.address ? ` · ${c.address}` : ""} · цен: {c.n_offers ?? 0}
                     </span>
                   </div>
-                  <div className="flex shrink-0 items-center gap-2 text-xs font-semibold">
+                  <div className="flex flex-wrap items-center gap-1 text-xs font-semibold sm:shrink-0 sm:gap-2">
                     <button
                       onClick={() => setOpenOffers(openOffers === c.id ? null : c.id)}
                       className="rounded-lg px-2.5 py-1.5 text-brand hover:bg-surface2"

@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { useBasket } from "@/lib/basket";
 import { useAuth } from "@/lib/auth";
 
-import { SECTION_LINKS } from "@/lib/site-nav";
+import { SECTION_LINKS, ADMIN_LINKS } from "@/lib/site-nav";
 
 export default function Header() {
   const pathname = usePathname();
@@ -39,7 +39,7 @@ export default function Header() {
             </svg>
           </span>
           <span className="text-[17px] font-semibold tracking-tight text-foreground">
-            MedPrice<span className="text-brand">.kz</span>
+            MedPrice<span className="text-brand">.xyz</span>
           </span>
         </Link>
 
@@ -166,6 +166,26 @@ export default function Header() {
               </Link>
             )}
           </div>
+
+          {/* Подразделы модерации — только когда мы внутри панели (там нет своей навигации на мобилке) */}
+          {isStaff && pathname.startsWith("/admin") && (
+            <div className="mt-2 flex flex-col gap-0.5 border-t border-line pt-2">
+              {ADMIN_LINKS.map((l) => {
+                const active = l.href === "/admin" ? pathname === "/admin" : pathname.startsWith(l.href);
+                return (
+                  <Link
+                    key={l.href}
+                    href={l.href}
+                    className={`rounded-lg px-3 py-2.5 transition-colors ${
+                      active ? "bg-surface2 text-brand-ink" : "text-muted hover:bg-surface2 hover:text-foreground"
+                    }`}
+                  >
+                    {l.label}
+                  </Link>
+                );
+              })}
+            </div>
+          )}
 
           {!loading && (
             <div className="mt-2 flex flex-col gap-0.5 border-t border-line pt-2">
