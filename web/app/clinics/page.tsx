@@ -96,7 +96,7 @@ export default function ClinicsPage() {
           )}
         </ul>
 
-        <div className="order-1 h-[420px] overflow-hidden rounded-2xl border border-line lg:order-2 lg:h-[600px]">
+        <div className="relative isolate order-1 h-[420px] overflow-hidden rounded-2xl border border-line lg:order-2 lg:h-[600px]">
           <ClinicsMap clinics={filtered} selectedId={selectedId} onSelect={setSelectedId} />
         </div>
       </div>
