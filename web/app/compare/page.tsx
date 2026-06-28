@@ -71,12 +71,28 @@ export default function ComparePage() {
   const [city, setCity] = useState("");
   const [data, setData] = useState<BasketResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const [priceFrom, setPriceFrom] = useState("");
+  const [priceTo, setPriceTo] = useState("");
+  const [minRating, setMinRating] = useState(0);
 
   useEffect(() => {
     api.cities().then(setCities).catch(() => {});
   }, []);
 
   const codes = useMemo(() => basket.map((b) => b.code).join(","), [basket]);
+
+  // фильтр клиник по «Итого» и рейтингу (как на странице услуги)
+  const shown = useMemo(() => {
+    if (!data) return [];
+    const lo = priceFrom ? Number(priceFrom) : null;
+    const hi = priceTo ? Number(priceTo) : null;
+    return data.clinics.filter((c) => {
+      if (lo != null && c.total < lo) return false;
+      if (hi != null && c.total > hi) return false;
+      if (minRating > 0 && (c.rating ?? 0) < minRating) return false;
+      return true;
+    });
+  }, [data, priceFrom, priceTo, minRating]);
 
   useEffect(() => {
     if (basket.length === 0) {
@@ -145,7 +161,53 @@ export default function ComparePage() {
       {loading && <div className="mt-6 h-64 animate-pulse rounded-2xl border border-line bg-surface2" />}
 
       {data && !loading && data.clinics.length > 0 && (
-        <div className="mt-6 overflow-x-auto rounded-2xl border border-line">
+        <>
+          {/* ФИЛЬТРЫ: «Итого» + рейтинг */}
+          <div className="mt-6 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
+            <div className="flex items-center gap-1.5">
+              <span className="text-faint">Итого ₸:</span>
+              <input
+                value={priceFrom}
+                onChange={(e) => setPriceFrom(e.target.value.replace(/\D/g, ""))}
+                inputMode="numeric"
+                placeholder="от"
+                className="h-8 w-20 rounded-lg border border-line2 bg-surface px-2 text-foreground outline-none focus:border-brand"
+              />
+              <span className="text-faint">–</span>
+              <input
+                value={priceTo}
+                onChange={(e) => setPriceTo(e.target.value.replace(/\D/g, ""))}
+                inputMode="numeric"
+                placeholder="до"
+                className="h-8 w-20 rounded-lg border border-line2 bg-surface px-2 text-foreground outline-none focus:border-brand"
+              />
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="mr-1 text-faint">Рейтинг:</span>
+              {([[0, "все"], [4, "4.0+"], [4.5, "4.5+"]] as [number, string][]).map(([v, label]) => (
+                <button
+                  key={v}
+                  onClick={() => setMinRating(v)}
+                  className={`rounded-lg px-2 py-1 font-medium transition-colors ${
+                    minRating === v ? "bg-brand-tint text-brand-ink" : "text-muted hover:text-foreground"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {(priceFrom || priceTo || minRating > 0) && (
+              <button
+                onClick={() => { setPriceFrom(""); setPriceTo(""); setMinRating(0); }}
+                className="text-faint underline-offset-2 hover:text-foreground hover:underline"
+              >
+                сбросить
+              </button>
+            )}
+            <span className="ml-auto text-faint">{shown.length} из {data.clinics.length}</span>
+          </div>
+
+          <div className="mt-3 overflow-x-auto rounded-2xl border border-line">
           <table className="w-full border-collapse text-sm">
             <thead>
               <tr className="bg-surface2 text-left">
@@ -160,7 +222,7 @@ export default function ComparePage() {
               </tr>
             </thead>
             <tbody>
-              {data.clinics.map((c) => {
+              {shown.map((c) => {
                 const best = c.clinic_id === data.cheapest_complete;
                 const route = twoGisRoute(c.lat, c.lng);
                 return (
@@ -219,7 +281,13 @@ export default function ComparePage() {
               })}
             </tbody>
           </table>
-        </div>
+          </div>
+          {shown.length === 0 && (
+            <div className="mt-3 rounded-2xl border border-line bg-surface px-4 py-8 text-center text-sm text-muted">
+              Нет клиник под выбранные фильтры. <button onClick={() => { setPriceFrom(""); setPriceTo(""); setMinRating(0); }} className="text-brand-ink hover:underline">Сбросить</button>
+            </div>
+          )}
+        </>
       )}
 
       {data && !loading && data.clinics.length === 0 && (
