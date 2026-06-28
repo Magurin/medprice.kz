@@ -40,9 +40,6 @@ jobs:
           H: ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}
           CODE: ${{ github.event.inputs.code }}
         run: |
-          ssh -i ~/.ssh/id_ed25519 "$H" "
-            set -e
-            set -a; . /etc/medcompare/medcompare.env; set +a
-            /opt/medcompare/.venv/bin/python -X utf8 /tmp/seed_demo_history.py '$CODE'
-            rm -f /tmp/seed_demo_history.py
-          "
+          # medcompare.env читается только root (chmod 600), поэтому источаем его
+          # и запускаем скрипт под sudo (у ubuntu пассвордлесс sudo, как в деплое).
+          ssh -i ~/.ssh/id_ed25519 "$H" "sudo bash -c 'set -a; . /etc/medcompare/medcompare.env; set +a; /opt/medcompare/.venv/bin/python -X utf8 /tmp/seed_demo_history.py \"$CODE\"'; rm -f /tmp/seed_demo_history.py"
