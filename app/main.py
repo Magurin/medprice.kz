@@ -1352,6 +1352,7 @@ def admin_import_commit(body: ImportCommit, staff: dict = Depends(verify_staff),
             db.delete(o)
 
     created, svc_created = 0, 0
+    seen_lm: dict[str, LearnedMatch] = {}  # дедуп решений внутри одного импорта (autoflush=False)
     for row in body.rows:
         if row.skip:
             continue
@@ -1381,17 +1382,24 @@ def admin_import_commit(body: ImportCommit, staff: dict = Depends(verify_staff),
         _record_price_point(db, c.id, svc.id, row.price, raw, body.source or "import")
         created += 1
         affected.add(svc.id)
-        # запоминаем решение (переживает пересборку витрины)
+        # запоминаем решение (переживает пересборку витрины).
+        # autoflush=False => вставка из предыдущей строки ещё не видна запросу,
+        # поэтому держим уже обработанные ключи в seen_lm, иначе две строки с одним
+        # norm_key вставят дубль и весь импорт упадёт на UniqueViolation.
         nk = normalize(raw)
-        lm = db.query(LearnedMatch).filter(LearnedMatch.norm_key == nk).first()
+        lm = seen_lm.get(nk)
+        if lm is None:
+            lm = db.query(LearnedMatch).filter(LearnedMatch.norm_key == nk).first()
         if lm:
             lm.service_code, lm.service_name, lm.category = svc.code, svc.name, svc.category
             lm.occurrences = (lm.occurrences or 0) + 1
             lm.added_by = staff.get("user_id")
         else:
-            db.add(LearnedMatch(norm_key=nk, service_code=svc.code, service_name=svc.name,
-                                category=svc.category, raw_example=raw, occurrences=1,
-                                added_by=staff.get("user_id")))
+            lm = LearnedMatch(norm_key=nk, service_code=svc.code, service_name=svc.name,
+                              category=svc.category, raw_example=raw, occurrences=1,
+                              added_by=staff.get("user_id"))
+            db.add(lm)
+        seen_lm[nk] = lm
     db.commit()
     for sid in affected:
         _refresh_service_counts(db, sid)
