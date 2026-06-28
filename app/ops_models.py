@@ -9,8 +9,10 @@ Base.metadata.drop_all()/create_all() и пересобирает витрину
 Слои:
   parse_runs      — журнал прогонов парсера (что/когда/итог)
   parse_errors    — ошибки парсинга с указанием источника и стадии (ТЗ: журналирование)
-  raw_price_items — СЫРОЙ слой: позиции «как пришли», отдельно от нормализованных
+  raw_price_items — СЫРОЙ слой позиций: «как пришли», отдельно от нормализованных
                     price_offers. content_hash UNIQUE = дедупликация при повторном запуске.
+  raw_clinics     — СЫРОЙ слой клиник: метаданные (город/улица/телефон/часы) из JSON-LD,
+                    один ряд на host. Нужен ingest для построения НОВЫХ клиник.
 """
 from sqlalchemy import (
     Boolean, Column, DateTime, ForeignKey, Integer, String, Text, func,
@@ -110,6 +112,27 @@ class LearnedMatch(OpsBase):
     added_at = Column(DateTime, server_default=func.now())
 
 
+class RawClinic(OpsBase):
+    """Сырьё по клинике из веб-харвестера (метаданные LocalBusiness JSON-LD).
+    Один ряд на host (UPSERT) — текущий снимок. app.ingest строит из него clinics
+    для НОВЫХ хостов; существующие клиники (с 2ГИС-обогащением) переиспользуются по host.
+    Раньше эти поля жили в harvester/raw/clinics.jsonl; после переезда сбора на VM
+    парсер пишет их сюда, чтобы БД-слой был самодостаточен для ingest."""
+    __tablename__ = "raw_clinics"
+    id = Column(Integer, primary_key=True)
+    run_id = Column(Integer, ForeignKey("parse_runs.id"), index=True)
+    host = Column(String, unique=True, index=True)
+    name = Column(String)              # бренд (различение филиалов по street делает ingest)
+    brand = Column(String)
+    street = Column(String)
+    city = Column(String)
+    address = Column(String)
+    phone = Column(String)
+    working_hours = Column(String)
+    source_url = Column(String)
+    captured_at = Column(DateTime, server_default=func.now())
+
+
 class RawPriceItem(OpsBase):
     __tablename__ = "raw_price_items"
     id = Column(Integer, primary_key=True)
@@ -122,5 +145,7 @@ class RawPriceItem(OpsBase):
     price = Column(Integer)               # тенге; NULL если «уточняйте»
     price_text = Column(String)           # как было в источнике
     currency = Column(String, default="KZT")
+    is_from = Column(Boolean, default=False)    # цена «от» (нижняя граница)
+    on_request = Column(Boolean, default=False) # «уточняйте» (нет числовой цены)
     content_hash = Column(String, unique=True, index=True)  # дедуп-ключ
     captured_at = Column(DateTime, server_default=func.now())

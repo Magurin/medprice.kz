@@ -32,7 +32,7 @@ import sys
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from .database import SessionLocal
-from .ops_models import OpsBase, ParseRun, ParseError, ParseRunLog, RawPriceItem
+from .ops_models import OpsBase, ParseRun, ParseError, ParseRunLog, RawPriceItem, RawClinic
 from .database import engine
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -58,6 +58,23 @@ def _log_error(db, run_id, source, stage, exc):
     db.commit()
     # та же ошибка попадает и в подробный лог — чтобы хронология прогона была полной
     _log(db, run_id, str(exc)[:2000], level="error", source=source, stage=stage)
+
+
+def _store_clinic(db, run_id, clinic) -> None:
+    """UPSERT метаданных клиники в raw_clinics по host (один ряд на host = текущий снимок)."""
+    if not clinic or not clinic.get("host"):
+        return
+    payload = {**clinic, "run_id": run_id}
+    upd = {k: payload[k] for k in
+           ("run_id", "name", "brand", "street", "city", "address",
+            "phone", "working_hours", "source_url") if k in payload}
+    stmt = (
+        pg_insert(RawClinic.__table__)
+        .values(payload)
+        .on_conflict_do_update(index_elements=["host"], set_=upd)
+    )
+    db.execute(stmt)
+    db.commit()
 
 
 def _store_rows(db, run_id, rows) -> tuple[int, int]:
@@ -127,8 +144,39 @@ def _web_hosts(db, sources, limit):
     return _enabled_web_hosts(db, limit)
 
 
-def _parse_web_source(harvest, host):
-    """host -> список raw-строк. Бросает исключение со стадией в .stage."""
+def _web_rows(host, offers):
+    """offers (из любого адаптера) -> raw-строки для raw_price_items (с дедуп-хэшем)."""
+    rows = []
+    for o in offers:
+        rows.append({
+            "source_kind": "web", "source": host, "clinic_host": host,
+            "raw_name": o["raw_name"], "category": o.get("category"),
+            "price": o.get("price"), "price_text": None, "currency": o.get("currency", "KZT"),
+            "is_from": bool(o.get("is_from")), "on_request": bool(o.get("on_request")),
+            "content_hash": _hash(host, o["raw_name"], o.get("price")),
+        })
+    return rows
+
+
+def _clinic_meta(host, clinic, default_url):
+    """clinic-словарь любого адаптера -> единый формат для raw_clinics (или None)."""
+    if not clinic:
+        return None
+    return {
+        "host": host,
+        "name": clinic.get("name") or clinic.get("brand"),
+        "brand": clinic.get("brand") or clinic.get("name"),
+        "street": clinic.get("street"),
+        "city": clinic.get("city"),
+        "address": clinic.get("address"),
+        "phone": clinic.get("phone"),
+        "working_hours": clinic.get("working_hours"),
+        "source_url": clinic.get("source_url") or default_url,
+    }
+
+
+def _parse_103kz_source(harvest, host):
+    """Шаблонный адаптер 103.kz: прайс всегда на /pricing/, вёрстка единая."""
     html = harvest.fetch(f"https://{host}/pricing/")
     if html is None:
         e = RuntimeError("страница недоступна (timeout/HTTP error)")
@@ -139,19 +187,31 @@ def _parse_web_source(harvest, host):
     except Exception as exc:
         exc.stage = "parse"
         raise
-    rows = []
-    for o in offers:
-        rows.append({
-            "source_kind": "web", "source": host, "clinic_host": host,
-            "raw_name": o["raw_name"], "category": o.get("category"),
-            "price": o.get("price"), "price_text": None, "currency": o.get("currency", "KZT"),
-            "content_hash": _hash(host, o["raw_name"], o.get("price")),
-        })
-    return rows
+    meta = _clinic_meta(host, clinic, f"https://{host}/pricing/") if offers else None
+    return meta, _web_rows(host, offers)
+
+
+def _parse_generic_source(host):
+    """Универсальный адаптер для произвольных доменов (эвристика + Groq-fallback)."""
+    from . import generic
+    clinic, offers = generic.parse_clinic(host)   # сам ищет страницу прайса и парсит
+    meta = _clinic_meta(host, clinic, f"https://{host}/") if offers else None
+    return meta, _web_rows(host, offers)
+
+
+def _parse_web_source(harvest, host):
+    """Роутер web-источника: *.103.kz -> шаблон, остальные домены -> generic.
+    Возвращает (clinic_meta | None, список raw-строк). Метаданные клиники больше НЕ
+    выбрасываем — run_parse сохранит их в raw_clinics (нужно ingest для новых клиник)."""
+    h = (host or "").strip().lower()
+    if h == "103.kz" or h.endswith(".103.kz"):
+        return _parse_103kz_source(harvest, host)
+    return _parse_generic_source(host)
 
 
 # ---------- источники: file (PDF/DOCX/XLSX/XLS) ----------
 def _parse_file_source(path):
+    """path -> (None, список raw-строк). У файлового источника нет метаданных клиники."""
     from .fileparse import parse_file
     try:
         recs = parse_file(path)
@@ -165,9 +225,10 @@ def _parse_file_source(path):
             "source_kind": "file", "source": base, "clinic_host": None,
             "raw_name": r["raw_name"], "category": r.get("section"),
             "price": r.get("price"), "price_text": None, "currency": r.get("currency", "KZT"),
+            "is_from": False, "on_request": r.get("price") is None,
             "content_hash": _hash(base, r["raw_name"], r.get("price")),
         })
-    return rows
+    return None, rows
 
 
 def _expand_paths(specs):
@@ -224,12 +285,14 @@ def run_parse(kind: str, sources=None, limit: int = 50, trigger: str = "manual")
 
         for src in items:
             try:
-                rows = handler(src)
+                clinic, rows = handler(src)
             except Exception as exc:
                 failed += 1
                 _log_error(db, run_id, str(src), getattr(exc, "stage", "parse"), exc)
                 continue
             try:
+                if clinic:
+                    _store_clinic(db, run_id, clinic)   # метаданные клиники в raw_clinics
                 new, dup = _store_rows(db, run_id, rows)
             except Exception as exc:
                 failed += 1
