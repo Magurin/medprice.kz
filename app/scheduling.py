@@ -1,14 +1,16 @@
 """
-scheduling.py — расписание ежедневного парсинга + «гейт» для GitHub Actions.
+scheduling.py — расписание ежедневного парсинга + «гейт» для таймера на VM.
 
-Зачем гейт: точное время cron нельзя задать из админки, не переписывая YAML
-workflow. Поэтому workflow запускается ЧАСТО (каждые 30 мин), а реально парсит
-только в окне выбранного в админке времени. Эта логика — здесь, чтобы и бэкенд
-(GET/PUT /api/admin/parse/schedule), и раннер использовали один и тот же код.
+Зачем гейт: точное время cron нельзя задать из админки, не переписывая unit.
+Поэтому systemd-таймер на VM (medcompare-parser.timer) будит сбор ЧАСТО (каждые
+30 мин), а реально парсит только в окне выбранного в админке времени. Эта логика —
+здесь, чтобы и бэкенд (GET/PUT /api/admin/parse/schedule), и обёртка запуска
+(deploy/parser-run.sh) использовали один и тот же код.
 
-Запуск гейта на раннере (см. .github/workflows/parser.yml):
+Запуск гейта (см. deploy/parser-run.sh):
     python -m app.scheduling
-  -> печатает в $GITHUB_OUTPUT: run=true|false, kind=..., limit=...
+  -> печатает run=true|false, kind=..., limit=...  (обёртка читает stdout;
+     $GITHUB_OUTPUT поддержан для обратной совместимости, но на VM не используется)
 """
 import datetime as dt
 import os

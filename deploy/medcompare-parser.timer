@@ -1,0 +1,13 @@
+# Таймер модуля сбора. Будит medcompare-parser.service каждые 30 мин; реально
+# парсинг запустится только в окно, выбранное в админке (гейт app.scheduling
+# сверяется с таблицей parse_schedule). Шаг 30 мин совпадает с STEP_MINUTES гейта.
+[Unit]
+Description=MedPrice KZ parser collect schedule (every 30 min, gated by DB)
+
+[Timer]
+OnCalendar=*:00,30
+Persistent=true
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target

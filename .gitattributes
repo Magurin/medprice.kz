@@ -1,0 +1,6 @@
+# Shell-скрипты и systemd-юниты должны быть с LF — иначе CRLF ломает shebang
+# (#!/usr/bin/env bash\r) и парсинг unit-файлов на Linux-сервере при деплое.
+*.sh            text eol=lf
+deploy/*.service text eol=lf
+deploy/*.timer   text eol=lf
+deploy/Caddyfile text eol=lf

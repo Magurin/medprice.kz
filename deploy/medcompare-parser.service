@@ -1,0 +1,24 @@
+# systemd-юнит модуля сбора MedPrice KZ (app.parser) — разовый прогон по таймеру.
+# Парсинг переехал с GitHub Actions на саму VM (БД теперь локальная, раннеру недоступна).
+# Установка:
+#   sudo cp deploy/medcompare-parser.service deploy/medcompare-parser.timer /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now medcompare-parser.timer
+# Ручной прогон сейчас:  sudo systemctl start medcompare-parser
+# Логи:                  journalctl -u medcompare-parser -f
+[Unit]
+Description=MedPrice KZ parser collect (one-shot)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/medcompare
+EnvironmentFile=/etc/medcompare/medcompare.env
+ExecStart=/opt/medcompare/deploy/parser-run.sh
+# сбор может идти долго (много хостов) — не убивать раньше времени
+TimeoutStartSec=3600
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full

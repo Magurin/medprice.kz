@@ -496,6 +496,8 @@ def unmatched(
 # ---------- админ-зона (только staff) ----------
 import json as _json
 import os as _os
+import subprocess as _subprocess
+import sys as _sys
 import urllib.request as _urlreq
 import urllib.error as _urlerr
 
@@ -569,52 +571,37 @@ class ParseRunBody(BaseModel):
     paths: Optional[str] = None
 
 
-def _dispatch_workflow(body: ParseRunBody) -> None:
-    """Триггерит GitHub Actions workflow_dispatch. Нужны env GH_TOKEN, GH_REPO (owner/repo)."""
-    token = _os.environ.get("GH_TOKEN", "")
-    repo = _os.environ.get("GH_REPO", "")
-    workflow = _os.environ.get("GH_PARSER_WORKFLOW", "parser.yml")
-    ref = _os.environ.get("GH_REF", "main")
-    if not token or not repo:
-        raise HTTPException(
-            501,
-            "Ручной запуск из UI не настроен: задайте GH_TOKEN и GH_REPO в окружении бэкенда "
-            "(парсинг идёт на GitHub-раннере). Cron и CLI работают и без этого.",
-        )
-    payload = {"ref": ref, "inputs": {
-        "kind": body.kind,
-        "limit": str(body.limit or 50),
-        "hosts": body.hosts or "",
-        "paths": body.paths or "",
-    }}
-    data = _json.dumps(payload).encode()
-    headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
-               "User-Agent": "medprice-admin", "X-GitHub-Api-Version": "2022-11-28"}
-    url = f"https://api.github.com/repos/{repo}/actions/workflows/{workflow}/dispatches"
+def _spawn_local_parse(body: ParseRunBody) -> None:
+    """Запускает модуль сбора ЛОКАЛЬНО на VM отдельным фоновым процессом.
 
-    def _post(u: str):
-        _urlreq.urlopen(_urlreq.Request(u, data=data, headers=headers, method="POST"), timeout=15)
-
+    Раньше ручной запуск дёргал GitHub Actions (workflow_dispatch), а раннер ходил
+    в Supabase. Теперь БД локальна на VM и раннеру недоступна — поэтому парсер
+    запускается здесь же, тем самым интерпретатором venv, что и бэкенд. Процесс
+    отвязывается (start_new_session) и переживает HTTP-запрос; свой ParseRun он
+    заводит сам, прогресс виден в админке через /api/admin/parse."""
+    py = _os.environ.get("PARSER_PYTHON") or _sys.executable
+    root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+    cmd = [py, "-X", "utf8", "-m", "app.parser",
+           "--kind", body.kind,
+           "--limit", str(body.limit or 50),
+           "--hosts", body.hosts or "",
+           "--paths", body.paths or "",
+           "--trigger", "dispatch"]
     try:
-        try:
-            _post(url)
-        except _urlerr.HTTPError as e:
-            # GitHub редиректит /repos/{owner}/{name} -> /repositories/{id} (после переименования
-            # репо). urllib НЕ повторяет POST на 307/308 — делаем редирект вручную один раз.
-            loc = e.headers.get("Location") if e.code in (301, 307, 308) else None
-            if loc:
-                _post(loc)
-            else:
-                raise
+        _subprocess.Popen(
+            cmd, cwd=root,
+            stdout=_subprocess.DEVNULL, stderr=_subprocess.DEVNULL,
+            start_new_session=True,
+        )
     except Exception as exc:
-        raise HTTPException(502, f"GitHub отклонил запуск: {exc}")
+        raise HTTPException(500, f"Не удалось запустить парсер на сервере: {exc}")
 
 
 @app.post("/api/admin/parse/run")
 def parse_run_trigger(body: ParseRunBody, staff: dict = Depends(verify_staff),
                       db: Session = Depends(get_db)):
-    """Ручной запуск парсинга из интерфейса (ТЗ §3.1). Делегирует воркеру на раннере."""
-    _dispatch_workflow(body)
+    """Ручной запуск парсинга из интерфейса (ТЗ §3.1). Запускает сбор локально на VM."""
+    _spawn_local_parse(body)
     run = ParseRun(source_kind=body.kind, trigger="manual", status="queued",
                    note=f"поставлено из админки ({staff.get('role')})")
     db.add(run)
@@ -624,9 +611,10 @@ def parse_run_trigger(body: ParseRunBody, staff: dict = Depends(verify_staff),
 
 
 # ---------- расписание ежедневного парсинга (ТЗ §3.1: запуск по cron) ----------
-# Время задаётся из админки и хранится в БД (UTC). Workflow на GitHub Actions
-# запускается часто и сверяется с этой записью через app.scheduling — так время
-# можно менять из UI без правки cron в YAML. См. .github/workflows/parser.yml.
+# Время задаётся из админки и хранится в БД (UTC). systemd-таймер на VM
+# (medcompare-parser.timer) будит сбор часто и сверяется с этой записью через
+# app.scheduling — так время можно менять из UI без правки cron. См.
+# deploy/medcompare-parser.timer и deploy/parser-run.sh.
 ALMATY_OFFSET = 5  # Asia/Almaty = UTC+5 (без перехода на летнее время)
 
 
