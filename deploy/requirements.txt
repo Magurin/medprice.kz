@@ -6,9 +6,9 @@
 uvicorn[standard]==0.32.*
 gunicorn==23.*
 
-# Разбор прайс-файлов из админки (импорт HTML/PDF/DOCX/Excel модераторами).
-# Импорты в app/fileparse.py и app/pdfparse.py ленивые, но на VM эти пакеты нужны
-# в рантайме (в отличие от harvester, который крутится на GitHub-раннере).
+# Разбор прайс-файлов из админки (импорт HTML/PDF/DOCX/Excel модераторами) +
+# web-харвестер (bs4/lxml), который теперь крутится на самой VM (парсинг переехал
+# с GitHub-раннера). Импорты в app/fileparse.py и app/pdfparse.py ленивые.
 openpyxl==3.*
 xlrd==2.*
 pymupdf==1.*

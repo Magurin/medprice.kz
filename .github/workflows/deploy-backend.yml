@@ -12,6 +12,7 @@ on:
     branches: [main]
     paths:                      # катим только при изменениях бэкенда
       - "app/**"
+      - "harvester/**"          # харвестер теперь крутится на VM (парсинг переехал с Actions)
       - "requirements.txt"
       - "requirements-dev.txt"
       - "deploy/**"
@@ -39,9 +40,12 @@ jobs:
         env:
           H: ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}
         run: |
-          # app/ и deploy/ зеркалим (--delete убирает удалённые файлы), requirements просто копируем.
+          # app/, harvester/ и deploy/ зеркалим (--delete убирает удалённые файлы), requirements просто копируем.
           rsync -az --delete --exclude='__pycache__' \
             -e "ssh -i ~/.ssh/id_ed25519" app/ "$H":/opt/medcompare/app/
+          # harvester нужен для web-сбора на VM; raw/ (сырьё) gitignored — исключаем, парсер пишет сырьё в БД.
+          rsync -az --delete --exclude='__pycache__' --exclude='raw' \
+            -e "ssh -i ~/.ssh/id_ed25519" harvester/ "$H":/opt/medcompare/harvester/
           rsync -az --delete \
             -e "ssh -i ~/.ssh/id_ed25519" deploy/ "$H":/opt/medcompare/deploy/
           rsync -az \
