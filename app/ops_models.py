@@ -130,6 +130,7 @@ class RawClinic(OpsBase):
     phone = Column(String)
     working_hours = Column(String)
     source_url = Column(String)
+    branches = Column(Text)            # JSON-список филиалов [{city,address,phone}] (если сеть)
     captured_at = Column(DateTime, server_default=func.now())
 
 

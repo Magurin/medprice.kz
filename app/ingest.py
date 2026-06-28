@@ -196,6 +196,16 @@ def run(dry_run: bool = False):
             conn.execute(insert(models.City.__table__), new_city_rows)
         if new_clinic_rows:
             _upsert(conn, models.Clinic.__table__, new_clinic_rows, "host", _NEW_CLINIC_COLS[1:])
+        # обогащение карточки существующих клиник: заполняем ТОЛЬКО пустые поля из raw_clinics
+        # (не перезатираем уже заполненные — напр. адрес/гео из 2ГИС).
+        conn.execute(text("""
+            UPDATE clinics c SET
+                address       = COALESCE(NULLIF(c.address,''), rc.address),
+                phone         = COALESCE(NULLIF(c.phone,''), rc.phone),
+                working_hours = COALESCE(NULLIF(c.working_hours,''), rc.working_hours)
+            FROM raw_clinics rc
+            WHERE c.host = rc.host AND c.id = ANY(:ids)
+        """), {"ids": touched_ids})
         _upsert(conn, models.Service.__table__, service_rows, "code", _SERVICE_UPDATE)
         for seq, tbl in (("cities_id_seq", "cities"),
                          ("clinics_id_seq", "clinics"),

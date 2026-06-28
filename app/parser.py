@@ -26,6 +26,7 @@ import argparse
 import datetime as dt
 import glob
 import hashlib
+import json
 import os
 import re
 import sys
@@ -68,7 +69,7 @@ def _store_clinic(db, run_id, clinic) -> None:
     payload = {**clinic, "run_id": run_id}
     upd = {k: payload[k] for k in
            ("run_id", "name", "brand", "street", "city", "address",
-            "phone", "working_hours", "source_url") if k in payload}
+            "phone", "working_hours", "source_url", "branches") if k in payload}
     stmt = (
         pg_insert(RawClinic.__table__)
         .values(payload)
@@ -163,6 +164,7 @@ def _clinic_meta(host, clinic, default_url):
     """clinic-словарь любого адаптера -> единый формат для raw_clinics (или None)."""
     if not clinic:
         return None
+    branches = clinic.get("branches")
     return {
         "host": host,
         "name": clinic.get("name") or clinic.get("brand"),
@@ -173,6 +175,7 @@ def _clinic_meta(host, clinic, default_url):
         "phone": clinic.get("phone"),
         "working_hours": clinic.get("working_hours"),
         "source_url": clinic.get("source_url") or default_url,
+        "branches": json.dumps(branches, ensure_ascii=False) if branches else None,
     }
 
 
