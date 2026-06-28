@@ -1,0 +1,48 @@
+name: seed-demo-history
+
+# Ручной засев СИНТЕТИЧЕСКОЙ истории цен (is_demo=true) на бой, чтобы график
+# «Динамика цены» показывал тренд-линии, а не одинокие точки. Запускается
+# кнопкой (workflow_dispatch). Работает по локальной БД VM (источник правды) —
+# поэтому через тот же SSH-доступ, что и деплой бэкенда.
+#
+# Использует те же секреты, что deploy-backend.yml:
+#   DEPLOY_SSH_KEY, DEPLOY_HOST, DEPLOY_USER, DEPLOY_KNOWN_HOSTS
+
+on:
+  workflow_dispatch:
+    inputs:
+      code:
+        description: "Код услуги (services.code)"
+        required: true
+        default: "mri_brain"
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup SSH
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+
+      - name: Copy seed script to VM
+        env:
+          H: ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}
+        run: |
+          scp -i ~/.ssh/id_ed25519 seed_demo_history.py "$H":/tmp/seed_demo_history.py
+
+      - name: Run seed against VM-local DB
+        env:
+          H: ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}
+          CODE: ${{ github.event.inputs.code }}
+        run: |
+          ssh -i ~/.ssh/id_ed25519 "$H" "
+            set -e
+            set -a; . /etc/medcompare/medcompare.env; set +a
+            /opt/medcompare/.venv/bin/python -X utf8 /tmp/seed_demo_history.py '$CODE'
+            rm -f /tmp/seed_demo_history.py
+          "
