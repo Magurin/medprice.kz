@@ -255,7 +255,13 @@ export const api = {
   compare: (code: string, city?: string) =>
     get<Compare>(`/api/services/${encodeURIComponent(code)}/compare${qs({ city })}`),
   history: (code: string) =>
-    get<HistoryResponse>(`/api/services/${encodeURIComponent(code)}/history`),
+    // Cache-buster (60-сек бакет): Cloudflare кэширует /history до часа
+    // (s-maxage=3600), из-за чего свежие точки динамики «не видны». Меняющийся
+    // раз в минуту параметр даёт новый ключ кэша — данные актуальны в пределах
+    // минуты, при этом кратковременный edge-кэш сохраняется.
+    get<HistoryResponse>(
+      `/api/services/${encodeURIComponent(code)}/history${qs({ _t: Math.floor(Date.now() / 60000) })}`
+    ),
   compareBasket: (codes: string[], city?: string, source?: string) =>
     send<BasketResponse>("POST", "/api/compare/basket", { codes, city, source }),
   subscribe: (p: { email: string; code: string; clinic_id?: number; city?: string }) =>
