@@ -1,19 +1,18 @@
 """
-generic.py — универсальный (бесшаблонный) адаптер сбора прайсов с ПРОИЗВОЛЬНЫХ
-сайтов клиник. В отличие от harvester/harvest.py (заточен под вёрстку 103.kz),
-здесь нет привязки к конкретным CSS-классам:
+generic.py — УНИФИЦИРОВАННЫЙ адаптер сбора прайсов с любого сайта клиники.
 
-  1. discover_price_urls — находим страницы прайса по ссылкам-ключам
-     (прайс/цены/стоимость/услуги/прейскурант/price/pricing) + типовые пути;
-  2. extract_offers     — эвристикой вынимаем пары «услуга — цена» из таблиц и
-     текста (токен «число + тг/₸/тенге/KZT»);
-  3. clinic_meta        — метаданные клиники из JSON-LD LocalBusiness;
-  4. Groq-fallback      — если эвристика сняла мало/ничего и задан GROQ_API_KEY,
-     отправляем текст страницы в Groq (бесплатный OpenAI-совместимый LLM) и просим
-     structured-вывод {услуга, цена, валюта}. Без ключа шаг просто пропускается.
+Никакой привязки к вёрстке конкретного сайта (в отличие от шаблонного 103.kz):
+  1. discover_price_urls — находим страницы прайса по ссылкам-ключам + типовым путям;
+  2. контент страницы:
+       • если в статическом HTML уже есть ценовые токены — берём его текст (дёшево);
+       • иначе (SPA: цены подгружает JS) — рендерим через Jina Reader (r.jina.ai,
+         бесплатно исполняет JS и отдаёт чистый текст) — без браузера на сервере;
+  3. llm_extract — Groq (бесплатный OpenAI-совместимый LLM) со structured-выводом
+     {услуга, цена, валюта}, длинные страницы — чанками;
+  4. clinic_meta — метаданные клиники из JSON-LD LocalBusiness (best-effort).
 
-Контракт parse_clinic(host) -> (clinic_meta|None, offers) совпадает с
-harvester.harvest.parse_clinic, чтобы app.parser мог использовать оба одинаково.
+Так модератор может добавить ЛЮБОЙ источник через UI — код один на все сайты.
+Контракт parse_clinic(host) -> (clinic_meta|None, offers) совпадает с harvest.
 offers: [{raw_name, category, price|None, currency, is_from, on_request}].
 """
 import itertools
@@ -24,7 +23,7 @@ import ssl
 import threading
 import urllib.error
 import urllib.request
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, quote
 
 from bs4 import BeautifulSoup
 
@@ -33,63 +32,59 @@ _ctx = ssl.create_default_context()
 _ctx.check_hostname = False
 _ctx.verify_mode = ssl.CERT_NONE
 
-# Порог, ниже которого пробуем Groq-fallback (если ключ задан).
-MIN_OFFERS_FOR_OK = int(os.environ.get("GENERIC_MIN_OFFERS", "5"))
-# Сколько страниц-кандидатов максимум обходим на хост.
-MAX_PRICE_PAGES = int(os.environ.get("GENERIC_MAX_PAGES", "6"))
+MAX_PRICE_PAGES = int(os.environ.get("GENERIC_MAX_PAGES", "3"))   # страниц-кандидатов на хост
+LLM_CHUNK = int(os.environ.get("GENERIC_LLM_CHUNK", "12000"))    # символов на запрос к Groq
+LLM_MAX_CHUNKS = int(os.environ.get("GENERIC_LLM_MAX_CHUNKS", "8"))  # потолок чанков на страницу
+JINA_BASE = os.environ.get("JINA_BASE", "https://r.jina.ai/")
+# Порог «в статике уже есть цены» — тогда Jina не нужна.
+STATIC_PRICE_SIGNAL = int(os.environ.get("GENERIC_STATIC_SIGNAL", "5"))
 
-# --- деньги: «1 500 ₸», «от 2 000 тенге», «5000 KZT» -----------------------------
-_CUR = r"(?:₸|тг\.?|тнг|тенге|тг\b|kzt)"
-_PRICE_RX = re.compile(r"(от\s+)?(\d[\d\s ]{2,})\s*" + _CUR, re.IGNORECASE)
-# Чисто числовая цена (для ячеек таблицы в колонке «Цена», где валюта в шапке).
-_NUM_CELL_RX = re.compile(r"^\s*(от\s+)?(\d[\d\s ]{2,})\s*" + _CUR + r"?\s*$", re.IGNORECASE)
+_CUR = r"(?:₸|тг\.?|тнг|тенге|kzt)"
+_PRICE_RX = re.compile(r"(\d[\d\s ]{2,})\s*" + _CUR, re.IGNORECASE)
 
 _PRICE_WORDS = ("прайс", "цены", "цена", "стоимость", "тариф", "прейскурант",
-                "услуги", "price", "pricing", "ceny", "uslugi", "tseny", "tarif")
-_PRICE_PATH_GUESSES = ("/price/", "/pricing/", "/price-list/", "/ceny/", "/tseny/",
-                       "/uslugi/", "/services/", "/price.html", "/prajs/")
-# Стоп-слова: строки, которые не услуга (заголовки/мусор).
-_NAME_STOP = re.compile(r"^\s*(итого|всего|категория|наименование|услуга|цена|стоимость)\s*$", re.I)
+                "услуги", "price", "pricing", "ceny", "uslugi", "tseny", "tarif",
+                "pricelist", "price-list")
+_PRICE_PATH_GUESSES = ("/price/", "/pricing/", "/price-list/", "/pricelist/", "/ceny/",
+                       "/tseny/", "/uslugi/", "/services/", "/price.html", "/prajs/")
 
 
 def fetch(url: str, timeout: int = 20, max_bytes: int = 4_000_000) -> str | None:
     try:
         req = urllib.request.Request(url, headers=UA)
         with urllib.request.urlopen(req, timeout=timeout, context=_ctx) as r:
-            data = r.read(max_bytes)
-        return data.decode("utf-8", "ignore")
+            return r.read(max_bytes).decode("utf-8", "ignore")
     except Exception:
         return None
 
 
-def _money(text: str):
-    """'от 2 000 тенге' -> (2000, is_from). Нет валюты/числа -> (None, False)."""
-    m = _PRICE_RX.search(text or "")
-    if not m:
-        return None, False
-    digits = re.sub(r"\D", "", m.group(2))
-    if len(digits) < 3:                     # < 100 ₸ — почти наверняка не цена услуги
-        return None, False
-    val = int(digits)
-    if val > 100_000_000:                   # абсурдно большое — мусор (телефон/индекс)
-        return None, False
-    return val, bool(m.group(1))
+def jina_render(url: str, timeout: int = 35) -> str | None:
+    """Рендер страницы через Jina Reader (исполняет JS) -> чистый текст. None при ошибке."""
+    headers = dict(UA)
+    key = os.environ.get("JINA_API_KEY")
+    if key:
+        headers["Authorization"] = f"Bearer {key}"     # выше бесплатные лимиты
+    try:
+        req = urllib.request.Request(JINA_BASE + url, headers=headers)
+        with urllib.request.urlopen(req, timeout=timeout, context=_ctx) as r:
+            return r.read(6_000_000).decode("utf-8", "ignore")
+    except Exception:
+        return None
 
 
-def _num_cell(text: str):
-    """Ячейка-цена: '12 000' / 'от 12 000 ₸'. -> (price, is_from) | (None, False)."""
-    m = _NUM_CELL_RX.match(text or "")
-    if not m:
-        return None, False
-    digits = re.sub(r"\D", "", m.group(2))
-    if len(digits) < 3:
-        return None, False
-    return int(digits), bool(m.group(1))
+def _price_signal(text: str) -> int:
+    return len(_PRICE_RX.findall(text or ""))
+
+
+def _visible_text(html: str) -> str:
+    soup = BeautifulSoup(html or "", "lxml")
+    for s in soup(["script", "style", "noscript"]):
+        s.decompose()
+    return soup.get_text(" ", strip=True)
 
 
 # ---------- поиск страниц прайса ----------
 def discover_price_urls(base_url: str, home_html: str) -> list[str]:
-    """Кандидаты страниц прайса: ссылки с ключевыми словами + типовые пути + сам home."""
     host = urlparse(base_url).netloc
     found: list[str] = []
     seen: set[str] = set()
@@ -101,7 +96,7 @@ def discover_price_urls(base_url: str, home_html: str) -> list[str]:
         if u in seen:
             return
         if urlparse(u).netloc and urlparse(u).netloc != host:
-            return                          # только тот же хост
+            return
         seen.add(u)
         found.append(u)
 
@@ -109,62 +104,125 @@ def discover_price_urls(base_url: str, home_html: str) -> list[str]:
     for a in soup.find_all("a", href=True):
         href = a["href"].strip()
         text = a.get_text(" ", strip=True).lower()
-        hl = href.lower()
-        if any(w in text or w in hl for w in _PRICE_WORDS):
+        if any(w in text or w in href.lower() for w in _PRICE_WORDS):
             add(urljoin(base_url, href))
-    for g in _PRICE_PATH_GUESSES:           # типовые пути на случай, если ссылок нет
+    for g in _PRICE_PATH_GUESSES:
         add(urljoin(base_url, g))
-    add(base_url.rstrip("/"))               # на крайний случай — сама главная
+    add(base_url.rstrip("/"))
     return found[:MAX_PRICE_PAGES]
 
 
-# ---------- эвристическое извлечение услуга/цена ----------
-def _extract_from_tables(soup: BeautifulSoup) -> list[dict]:
-    offers = []
-    for table in soup.find_all("table"):
-        rows = table.find_all("tr")
-        for tr in rows:
-            cells = [td.get_text(" ", strip=True) for td in tr.find_all(["td", "th"])]
-            if len(cells) < 2:
-                continue
-            # цена — последняя ячейка, похожая на число-с-ценой; имя — первая текстовая
-            price = is_from = None
-            price_idx = None
-            for i in range(len(cells) - 1, -1, -1):
-                p, isf = _num_cell(cells[i])
-                if p is not None:
-                    price, is_from, price_idx = p, isf, i
-                    break
-            if price is None:
-                continue
-            name = next((c for j, c in enumerate(cells)
-                         if j != price_idx and c and not _NAME_STOP.match(c)
-                         and not _num_cell(c)[0]), None)
-            if not name:
-                continue
-            offers.append({"raw_name": name, "category": "", "price": price,
-                           "currency": "KZT", "is_from": bool(is_from), "on_request": False})
-    return offers
+# ---------- Groq (бесплатный LLM, structured output, мульти-ключ) ----------
+_key_lock = threading.Lock()
+_key_counter = itertools.count()
 
 
-def _extract_from_text(soup: BeautifulSoup) -> list[dict]:
-    """Блоки, где в одном элементе есть и название, и токен цены (число+валюта)."""
+def _groq_keys() -> list[str]:
+    raw = os.environ.get("GROQ_API_KEYS") or os.environ.get("GROQ_API_KEY") or ""
+    return [k.strip() for k in raw.split(",") if k.strip()]
+
+
+def _keys_in_rotation(keys: list[str]) -> list[str]:
+    if len(keys) <= 1:
+        return keys
+    with _key_lock:
+        start = next(_key_counter) % len(keys)
+    return keys[start:] + keys[:start]
+
+
+def _groq_call(key: str, payload: dict):
+    req = urllib.request.Request(
+        "https://api.groq.com/openai/v1/chat/completions",
+        data=json.dumps(payload).encode(),
+        headers={"Authorization": f"Bearer {key}",
+                 "Content-Type": "application/json", **UA},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=60, context=_ctx) as r:
+        return json.loads(r.read().decode("utf-8", "ignore"))
+
+
+_SYS_MSG = (
+    "Ты извлекаешь прайс-лист медицинских услуг из текста страницы клиники. "
+    "Верни СТРОГО JSON-объект {\"items\":[{\"name\":\"...\",\"price\":1500,\"currency\":\"KZT\"}]}. "
+    "name — ТОЧНОЕ название услуги без приписок о сроках/разделах/днях/категориях. "
+    "price — целое число в тенге без пробелов; если цена «уточняйте»/«от …»/нет — price=null "
+    "(а для «от N» возьми число N). Не выдумывай услуги, бери только реально присутствующие. "
+    "Никакого текста кроме JSON."
+)
+
+
+def _groq_one(text: str) -> list[dict]:
+    keys = _groq_keys()
+    if not keys:
+        return []
+    model = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+    payload = {
+        "model": model,
+        "messages": [{"role": "system", "content": _SYS_MSG},
+                     {"role": "user", "content": text}],
+        "temperature": 0,
+        "response_format": {"type": "json_object"},
+    }
+    resp = None
+    for key in _keys_in_rotation(keys):
+        try:
+            resp = _groq_call(key, payload)
+            break
+        except urllib.error.HTTPError as e:
+            if e.code in (429, 401, 403):
+                continue
+            return []
+        except Exception:
+            return []
+    if resp is None:
+        return []
+    try:
+        items = json.loads(resp["choices"][0]["message"]["content"]).get("items", [])
+    except Exception:
+        return []
+    out = []
+    for it in items:
+        name = (it.get("name") or "").strip()
+        if not name:
+            continue
+        price = it.get("price")
+        try:
+            price = int(price) if price is not None else None
+        except (TypeError, ValueError):
+            price = None
+        out.append({"raw_name": name, "category": "", "price": price,
+                    "currency": (it.get("currency") or "KZT").upper(),
+                    "is_from": False, "on_request": price is None})
+    return out
+
+
+def _chunks_by_lines(text: str, size: int) -> list[str]:
+    lines = (text or "").splitlines()
+    chunks, cur = [], ""
+    for ln in lines:
+        if len(cur) + len(ln) + 1 > size and cur:
+            chunks.append(cur)
+            cur = ""
+        cur += ln + "\n"
+    if cur.strip():
+        chunks.append(cur)
+    return chunks[:LLM_MAX_CHUNKS] or ([text[:size]] if text else [])
+
+
+def llm_extract(text: str) -> list[dict]:
+    """Извлечь услуги/цены из текста через Groq, длинный текст — чанками + дедуп."""
+    if not text or not _groq_keys():
+        return []
     offers = []
-    for el in soup.find_all(["li", "p", "div", "tr", "dd", "span"]):
-        if el.find(["li", "p", "div", "tr", "table"]):
-            continue                        # берём только «листовые» блоки
-        text = el.get_text(" ", strip=True)
-        if not text or len(text) > 300:
-            continue
-        price, is_from = _money(text)
-        if price is None:
-            continue
-        name = _PRICE_RX.sub("", text).strip(" .—-:; ")
-        if not name or _NAME_STOP.match(name) or len(name) < 3:
-            continue
-        offers.append({"raw_name": name, "category": "", "price": price,
-                       "currency": "KZT", "is_from": bool(is_from), "on_request": False})
-    return offers
+    for chunk in _chunks_by_lines(text, LLM_CHUNK):
+        offers.extend(_groq_one(chunk))
+    return _dedup(offers)
+
+
+# Совместимость: старое имя groq_extract (без чанков) для тестов.
+def groq_extract(text: str) -> list[dict]:
+    return llm_extract(text)
 
 
 def _dedup(offers: list[dict]) -> list[dict]:
@@ -176,12 +234,6 @@ def _dedup(offers: list[dict]) -> list[dict]:
         seen.add(key)
         out.append(o)
     return out
-
-
-def extract_offers(html: str) -> list[dict]:
-    soup = BeautifulSoup(html or "", "lxml")
-    offers = _extract_from_tables(soup) + _extract_from_text(soup)
-    return _dedup(offers)
 
 
 # ---------- метаданные клиники (JSON-LD LocalBusiness) ----------
@@ -204,12 +256,12 @@ def _iter_ld(soup: BeautifulSoup):
 
 def clinic_meta(host: str, html: str, source_url: str) -> dict:
     soup = BeautifulSoup(html or "", "lxml")
-    name = street = city = address = phone = hours = None
+    name = street = city = phone = None
     for d in _iter_ld(soup):
         t = d.get("@type", "")
         types = t if isinstance(t, list) else [t]
-        if not any("Business" in str(x) or "Organization" in str(x)
-                   or "Hospital" in str(x) or "Clinic" in str(x) for x in types):
+        if not any(any(w in str(x) for w in ("Business", "Organization", "Hospital", "Clinic"))
+                   for x in types):
             continue
         name = name or (d.get("name") or "").strip() or None
         ad = d.get("address")
@@ -220,146 +272,75 @@ def clinic_meta(host: str, html: str, source_url: str) -> dict:
         if isinstance(tel, list):
             tel = tel[0] if tel else None
         phone = phone or (str(tel).strip() if tel else None)
-    if not name:                            # откат: <title> / og:site_name / h1
+    if not name:
         og = soup.find("meta", property="og:site_name")
         if og and og.get("content"):
             name = og["content"].strip()
         elif soup.title:
             name = soup.title.get_text(strip=True)[:120] or None
-        elif soup.find("h1"):
-            name = soup.find("h1").get_text(" ", strip=True)[:120] or None
     address = ", ".join([p for p in (city, street) if p]) or None
-    return {
-        "host": host, "name": name or host, "brand": name or host,
-        "street": street, "city": city, "address": address,
-        "phone": phone, "working_hours": hours,
-        "source_url": source_url,
-    }
-
-
-# ---------- Groq fallback (бесплатный LLM, structured output) ----------
-# Несколько ключей (GROQ_API_KEYS через запятую) — ротация по кругу + переход на
-# следующий ключ при 429, чтобы обходить rate-limit бесплатного тарифа.
-_key_lock = threading.Lock()
-_key_counter = itertools.count()
-
-
-def _groq_keys() -> list[str]:
-    raw = os.environ.get("GROQ_API_KEYS") or os.environ.get("GROQ_API_KEY") or ""
-    return [k.strip() for k in raw.split(",") if k.strip()]
-
-
-def _keys_in_rotation(keys: list[str]) -> list[str]:
-    """Порядок ключей со сдвигом старта по кругу — равномерно размазываем нагрузку."""
-    if len(keys) <= 1:
-        return keys
-    with _key_lock:
-        start = next(_key_counter) % len(keys)
-    return keys[start:] + keys[:start]
-
-
-def _groq_call(key: str, payload: dict):
-    req = urllib.request.Request(
-        "https://api.groq.com/openai/v1/chat/completions",
-        data=json.dumps(payload).encode(),
-        headers={"Authorization": f"Bearer {key}",
-                 "Content-Type": "application/json", **UA},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=60, context=_ctx) as r:
-        return json.loads(r.read().decode("utf-8", "ignore"))
-
-
-def groq_extract(text: str) -> list[dict]:
-    """Извлечь услуги/цены через Groq, если задан ключ. Иначе/при ошибке -> []."""
-    keys = _groq_keys()
-    if not keys:
-        return []
-    model = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
-    text = (text or "")[:15000]             # держим вход в разумных пределах (лимиты)
-    sys_msg = ("Ты извлекаешь прайс-лист медицинских услуг со страницы клиники. "
-               "Верни СТРОГО JSON-объект вида "
-               '{"items":[{"name":"...","price":1500,"currency":"KZT"}]}. '
-               "price — целое число в тенге без пробелов; если цена «уточняйте»/нет — "
-               "price=null. Никакого текста кроме JSON.")
-    payload = {
-        "model": model,
-        "messages": [{"role": "system", "content": sys_msg},
-                     {"role": "user", "content": text}],
-        "temperature": 0,
-        "response_format": {"type": "json_object"},
-    }
-    resp = None
-    for key in _keys_in_rotation(keys):
-        try:
-            resp = _groq_call(key, payload)
-            break
-        except urllib.error.HTTPError as e:
-            if e.code in (429, 401, 403):   # лимит/невалидный ключ — пробуем следующий
-                continue
-            return []
-        except Exception:
-            return []
-    if resp is None:                        # все ключи упёрлись в лимит
-        return []
-    try:
-        content = resp["choices"][0]["message"]["content"]
-        items = json.loads(content).get("items", [])
-    except Exception:
-        return []
-    offers = []
-    for it in items:
-        name = (it.get("name") or "").strip()
-        if not name:
-            continue
-        price = it.get("price")
-        try:
-            price = int(price) if price is not None else None
-        except (TypeError, ValueError):
-            price = None
-        offers.append({"raw_name": name, "category": "", "price": price,
-                       "currency": (it.get("currency") or "KZT").upper(),
-                       "is_from": False, "on_request": price is None})
-    return _dedup(offers)
+    return {"host": host, "name": name or host, "brand": name or host,
+            "street": street, "city": city, "address": address,
+            "phone": phone, "working_hours": None, "source_url": source_url}
 
 
 # ---------- оркестрация одного хоста ----------
-def parse_clinic(host: str):
-    """host -> (clinic_meta|None, offers). Делает собственный fetch/discover.
-    clinic_meta=None и offers=[] -> вызывающий считает источник неуспешным."""
+def _page_content(url: str, plain_html: str | None) -> str:
+    """Текст страницы для LLM: статика как есть, иначе рендер через Jina."""
+    plain = _visible_text(plain_html) if plain_html else ""
+    if _price_signal(plain) >= STATIC_PRICE_SIGNAL:
+        return plain                        # цены уже в статике — Jina не нужна
+    rendered = jina_render(url)             # SPA: рендерим JS
+    return rendered or plain
+
+
+def _split_source(source: str) -> tuple[str, str | None]:
+    """Источник может быть доменом ('clinic.kz') или прямым URL прайса
+    ('clinic.kz/price', 'https://clinic.kz/pricelist/astana'). -> (host, direct_url|None).
+    Прямой URL модератор задаёт в админке, когда страницу прайса не найти автоматически
+    (напр. city-сегментные SPA вроде KDL: kdlolymp.kz/pricelist/astana)."""
+    s = (source or "").strip()
+    s = re.sub(r"^https?://", "", s).strip("/")
+    if "/" in s:
+        host = s.split("/", 1)[0]
+        return host, "https://" + s
+    return s, None
+
+
+def parse_clinic(source: str):
+    """source (домен или прямой URL прайса) -> (clinic_meta|None, offers).
+    Унифицированный путь: [прямой URL] + discover -> контент (статика/Jina) -> Groq."""
+    host, direct = _split_source(source)
     base = f"https://{host}/"
-    home = fetch(base)
-    if home is None:
-        home = fetch(f"http://{host}/")
-        base = f"http://{host}/"
-    if home is None:
-        e = RuntimeError("сайт недоступен (timeout/HTTP error)")
-        e.stage = "fetch"
-        raise e
+    home = fetch(base) or fetch(f"http://{host}/")
 
-    urls = discover_price_urls(base, home)
-    offers: list[dict] = []
-    best_html = home
-    best_url = base
-    for u in urls:
-        html = fetch(u) if u != base else home
-        if not html:
-            continue
-        got = extract_offers(html)
-        if got:
-            offers.extend(got)
-            if len(got) > len(extract_offers(best_html)):
-                best_html, best_url = html, u
-    offers = _dedup(offers)
+    candidates: list[str] = []
+    if direct:
+        candidates.append(direct)           # прямой URL прайса — первым приоритетом
+    if home:
+        candidates += [u for u in discover_price_urls(base, home) if u not in candidates]
+    elif not direct:
+        candidates.append(f"https://{host}/")  # ни home, ни прямого — пробуем корень через Jina
+    candidates = candidates[:MAX_PRICE_PAGES]
 
-    # Fallback на Groq, если эвристика сняла мало (и ключ задан).
-    if len(offers) < MIN_OFFERS_FOR_OK:
-        soup = BeautifulSoup(best_html, "lxml")
-        for s in soup(["script", "style", "noscript"]):
-            s.decompose()
-        llm = groq_extract(soup.get_text(" ", strip=True))
-        if len(llm) > len(offers):
-            offers = llm
+    best_offers: list[dict] = []
+    best_url = direct or base
+    for u in candidates:
+        plain = home if home and u.rstrip("/") == base.rstrip("/") else fetch(u)
+        content = _page_content(u, plain)
+        offers = llm_extract(content)
+        if len(offers) > len(best_offers):
+            best_offers, best_url = offers, u
+        if len(best_offers) > 40:           # уже похоже на полноценный прайс — хватит
+            break
 
-    meta = clinic_meta(host, home, best_url) if offers else None
-    return meta, offers
+    if not best_offers:
+        if home is None and not direct:
+            e = RuntimeError("сайт недоступен (timeout/HTTP error)")
+            e.stage = "fetch"
+            raise e
+        return None, []
+
+    meta = clinic_meta(host, home or "", best_url)
+    meta["source_url"] = best_url
+    return meta, best_offers

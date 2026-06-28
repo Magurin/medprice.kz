@@ -27,6 +27,7 @@ import datetime as dt
 import glob
 import hashlib
 import os
+import re
 import sys
 
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -191,16 +192,20 @@ def _parse_103kz_source(harvest, host):
     return meta, _web_rows(host, offers)
 
 
-def _parse_generic_source(host):
-    """Универсальный адаптер для произвольных доменов (эвристика + Groq-fallback)."""
+def _parse_generic_source(source):
+    """Унифицированный адаптер для ЛЮБОГО источника: discover -> render(Jina) -> Groq.
+    source может быть доменом или прямым URL прайса; clinic_host нормализуем до домена."""
     from . import generic
-    clinic, offers = generic.parse_clinic(host)   # сам ищет страницу прайса и парсит
-    meta = _clinic_meta(host, clinic, f"https://{host}/") if offers else None
-    return meta, _web_rows(host, offers)
+    clinic, offers = generic.parse_clinic(source)   # сам ищет/рендерит/извлекает
+    domain = (clinic or {}).get("host") or re.sub(r"^https?://", "", str(source)).split("/")[0]
+    meta = _clinic_meta(domain, clinic, f"https://{domain}/") if offers else None
+    return meta, _web_rows(domain, offers)
 
 
 def _parse_web_source(harvest, host):
-    """Роутер web-источника: *.103.kz -> шаблон, остальные домены -> generic.
+    """Роутер web-источника по домену:
+      *.103.kz  -> шаблонный харвестер (единая вёрстка, 9000+ хостов задёшево);
+      остальное -> унифицированный generic (render через Jina + извлечение Groq).
     Возвращает (clinic_meta | None, список raw-строк). Метаданные клиники больше НЕ
     выбрасываем — run_parse сохранит их в raw_clinics (нужно ingest для новых клиник)."""
     h = (host or "").strip().lower()
