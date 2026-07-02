@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🏥 MedPrice KZ
+# 🏥 medprice.xyz
 
 **Агрегатор и сравнение цен на медицинские услуги в Казахстане**
 
